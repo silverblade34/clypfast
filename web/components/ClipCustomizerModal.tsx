@@ -30,6 +30,10 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  ScanFace,
+  Maximize2,
+  Columns2,
+  Tv,
 } from "lucide-react";
 import type { Clip } from "./ClipCard";
 import styles from "./ClipCustomizerModal.module.css";
@@ -39,6 +43,7 @@ import styles from "./ClipCustomizerModal.module.css";
 type CropMode = "smart_vertical" | "vertical_blur" | "original" | "split_screen";
 type SubTheme = "hormozi" | "minimal" | "cyberpunk" | "podcast" | "neon" | "classic" | "duotone" | "none";
 type HookDecor = "none" | "fire" | "arrow" | "star" | "lightning" | "mic" | "bar";
+type HookTheme = "impact" | "hormozi" | "badge" | "neon" | "fire" | "minimal";
 
 interface ColorPreset {
   label: string;
@@ -99,10 +104,10 @@ const COLOR_PRESETS: ColorPreset[] = [
 const THEME_CONFIG: Record<SubTheme, { label: string; fontLabel: string; preview: string; desc: string }> = {
   hormozi: { label: "Hormozi", fontLabel: "Arial Black", preview: "BOLD", desc: "Texto grueso negro" },
   minimal: { label: "Minimal", fontLabel: "Helvetica", preview: "clean", desc: "Sutil y elegante" },
-  cyberpunk: { label: "Cyberpunk", fontLabel: "Impact", preview: "IMPACT", desc: "Agresivo y viral" },
+  cyberpunk: { label: "Impact", fontLabel: "Impact", preview: "IMPACT", desc: "Agresivo y viral" },
   podcast: { label: "Podcast", fontLabel: "Arial", preview: "Podcast", desc: "Nombre del speaker" },
   neon: { label: "Neon", fontLabel: "Impact", preview: "GLOW", desc: "Brillo neón" },
-  classic: { label: "Classic", fontLabel: "Times", preview: "Classic", desc: "Estilo clásico TV" },
+  classic: { label: "Classic", fontLabel: "Times New Roman", preview: "Classic", desc: "Estilo clásico TV" },
   duotone: { label: "Duotone", fontLabel: "Helvetica", preview: "DUO\nTONE", desc: "Dos colores" },
   none: { label: "Sin subs", fontLabel: "", preview: "—", desc: "Solo gancho" },
 };
@@ -117,11 +122,25 @@ const HOOK_DECORS: { id: HookDecor; label: string; prefix: string; suffix: strin
   { id: "bar",       label: "Barra",     prefix: "| ",  suffix: " |" },
 ];
 
-const MODE_CONFIG: { id: CropMode; label: string; desc: string; icon: string }[] = [
-  { id: "smart_vertical", label: "IA Smart",   desc: "Face tracking automático", icon: "🤖" },
-  { id: "vertical_blur",  label: "Blur BG",    desc: "Fondo difuminado suave",   icon: "🌫" },
-  { id: "split_screen",   label: "Podcast",    desc: "Pantalla dividida",        icon: "🎙" },
-  { id: "original",       label: "Original",   desc: "Sin recorte 16:9",         icon: "📐" },
+const HOOK_THEME_CONFIG: Record<HookTheme, { label: string; fontLabel: string; preview: string; desc: string }> = {
+  impact:  { label: "Impact",  fontLabel: "'Impact', 'Arial Black', sans-serif", preview: "VIRAL",    desc: "Letra alta y contundente" },
+  hormozi: { label: "Hormozi", fontLabel: "'Arial Black', Impact, sans-serif",   preview: "BOLD",     desc: "Grueso con borde negro" },
+  badge:   { label: "Caja",    fontLabel: "'Impact', 'Arial Black', sans-serif", preview: "[ CAJA ]", desc: "Fondo oscuro estilo CapCut" },
+  neon:    { label: "Neón",    fontLabel: "'Impact', 'Arial Black', sans-serif", preview: "GLOW",     desc: "Brillo luminoso cian" },
+  fire:    { label: "Fuego",   fontLabel: "'Arial Black', Impact, sans-serif",   preview: "FUEGO",    desc: "Acento naranja y viral" },
+  minimal: { label: "Minimal", fontLabel: "Helvetica, Arial, sans-serif",        preview: "clean",    desc: "Sutil y elegante" },
+};
+
+const MODE_CONFIG: {
+  id: CropMode;
+  label: string;
+  desc: string;
+  Icon: React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
+}[] = [
+  { id: "smart_vertical", label: "IA Smart",   desc: "Face tracking automático", Icon: ScanFace },
+  { id: "vertical_blur",  label: "Blur BG",    desc: "Fondo difuminado suave",   Icon: Maximize2 },
+  { id: "split_screen",   label: "Podcast",    desc: "Pantalla dividida",        Icon: Columns2 },
+  { id: "original",       label: "Original",   desc: "Sin recorte 16:9",         Icon: Tv },
 ];
 
 /* ─── Utilidades (espejadas del backend para WYSIWYG determinista) ── */
@@ -175,6 +194,7 @@ export default function ClipCustomizerModal({
   const [hookText, setHookText] = useState(clip.title);
   const [hookDuration, setHookDuration] = useState(3.5);
   const [hookDecor, setHookDecor] = useState<HookDecor>("none");
+  const [hookTheme, setHookTheme] = useState<HookTheme>("impact");
 
   // ── Estado: Subtítulos ───────────────────────────────────────
   const [subTheme, setSubTheme] = useState<SubTheme>("hormozi");
@@ -237,6 +257,11 @@ export default function ClipCustomizerModal({
     }
 
     const preset = COLOR_PRESETS[colorPresetIdx];
+    const decor = HOOK_DECORS.find((d) => d.id === hookDecor) || HOOK_DECORS[0];
+    const effectiveHook = hookEnabled
+      ? `${decor.prefix}${hookText.trim()}${decor.suffix}`.trim()
+      : null;
+    const selectedFont = THEME_CONFIG[subTheme]?.fontLabel || null;
 
     try {
       const res = await fetch("/api/clips/render", {
@@ -254,8 +279,10 @@ export default function ClipCustomizerModal({
           normalize_audio: true,
           clip_id: clip.id,
           // Overrides del modal → backend
-          hook_title_custom: hookText !== clip.title ? hookText : null,
+          hook_title_custom: effectiveHook,
           hook_duration: hookDuration,
+          hook_theme: hookTheme,
+          sub_font: selectedFont,
           sub_base_color: subTheme !== "none" ? preset.assBase : null,
           sub_highlight_color: subTheme !== "none" ? preset.assHighlight : null,
           sub_margin_v: marginV,
@@ -387,38 +414,101 @@ export default function ClipCustomizerModal({
                 </div>
               )}
 
-              {/* HUD: Gancho con decorador seleccionable */}
+              {/* HUD: Gancho con decorador y plantilla seleccionable */}
               {hookEnabled && hookText && (() => {
-                const decor = HOOK_DECORS.find(d => d.id === hookDecor) || HOOK_DECORS[0];
+                const decor = HOOK_DECORS.find((d) => d.id === hookDecor) || HOOK_DECORS[0];
+                const isBadge = hookTheme === "badge";
+                const isNeon = hookTheme === "neon";
+                const isFire = hookTheme === "fire";
+                const isMinimal = hookTheme === "minimal";
+
                 return (
-                  <div className={styles.hookHUD}>
-                    {decor.prefix}{deterministicLineBreak(hookText)}{decor.suffix}
+                  <div
+                    className={styles.hookHUD}
+                    style={{
+                      fontFamily: HOOK_THEME_CONFIG[hookTheme]?.fontLabel || "'Impact', sans-serif",
+                      fontWeight: isMinimal ? 700 : 900,
+                      textTransform: isMinimal ? "none" : "uppercase",
+                      letterSpacing: isMinimal ? "0.01em" : "0.03em",
+                      color: isNeon ? "#00ffff" : isFire ? "#ffbb33" : "#ffffff",
+                      background: isBadge ? "rgba(0, 0, 0, 0.85)" : "transparent",
+                      padding: isBadge ? "5px 12px" : "0",
+                      borderRadius: isBadge ? "8px" : "0",
+                      border: isBadge ? "1px solid rgba(255, 255, 255, 0.18)" : "none",
+                      boxShadow: isBadge ? "0 4px 14px rgba(0,0,0,0.7)" : "none",
+                      textShadow: isNeon
+                        ? "0 0 10px #00ffff, 0 0 20px #00aaff, 0 2px 4px #000"
+                        : isFire
+                        ? "0 0 12px #ff4400, 2px 2px 0 #000"
+                        : isMinimal
+                        ? "0 2px 6px rgba(0,0,0,0.9)"
+                        : "0 0 6px #000, 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000",
+                      WebkitTextStroke: isMinimal ? "0.8px #000" : isBadge ? "1.5px #000" : "2.5px #000",
+                    }}
+                  >
+                    {decor.prefix ? `${decor.prefix} ` : ""}
+                    {deterministicLineBreak(hookText)}
+                    {decor.suffix ? ` ${decor.suffix}` : ""}
                   </div>
                 );
               })()}
 
-              {/* HUD: Subtítulos demo */}
-              {subTheme !== "none" && (
-                <div
-                  className={styles.subsHUD}
-                  style={{
-                    bottom: subsBottomPct,
-                    color: preset.base,
-                    // Sombra de borde simulando libass outline
-                    textShadow: `
-                      0 0 6px #000,
-                      2px 2px 0 #000,
-                      -2px -2px 0 #000,
-                      2px -2px 0 #000,
-                      -2px 2px 0 #000
-                    `,
-                  }}
-                >
-                  Texto de{" "}
-                  <span style={{ color: preset.highlight }}>ejemplo</span>{" "}
-                  en vivo
-                </div>
-              )}
+              {/* HUD: Subtítulos demo con reflejo fiel de plantilla */}
+              {subTheme !== "none" && (() => {
+                const isNeon = subTheme === "neon";
+                const isMinimal = subTheme === "minimal";
+                const isClassic = subTheme === "classic";
+                const isPodcast = subTheme === "podcast";
+                const isDuotone = subTheme === "duotone";
+                const isCyberpunk = subTheme === "cyberpunk";
+
+                const fontName = THEME_CONFIG[subTheme]?.fontLabel || "'Impact', sans-serif";
+                const baseColor = isNeon ? "#00ffcc" : isDuotone ? "#c084fc" : isPodcast ? "#f8fafc" : preset.base;
+                const highlightColor = isNeon ? "#ffff00" : isDuotone ? "#ffff00" : preset.highlight;
+
+                return (
+                  <div
+                    className={styles.subsHUD}
+                    style={{
+                      bottom: subsBottomPct,
+                      color: baseColor,
+                      fontFamily: fontName,
+                      fontStyle: isClassic ? "italic" : "normal",
+                      fontWeight: isMinimal ? 600 : 900,
+                      textTransform: (isMinimal || isClassic || isPodcast) ? "none" : "uppercase",
+                      letterSpacing: isCyberpunk ? "0.03em" : "0.01em",
+                      background: isPodcast ? "rgba(0, 0, 0, 0.72)" : "transparent",
+                      padding: isPodcast ? "3px 10px" : "0",
+                      borderRadius: isPodcast ? "5px" : "0",
+                      border: isPodcast ? "1px solid rgba(255,255,255,0.12)" : "none",
+                      textShadow: isNeon
+                        ? "0 0 10px #00ffcc, 0 0 20px #00ffcc, 0 2px 4px #000"
+                        : isMinimal
+                        ? "0 2px 6px rgba(0,0,0,0.85)"
+                        : `
+                          0 0 6px #000,
+                          2px 2px 0 #000,
+                          -2px -2px 0 #000,
+                          2px -2px 0 #000,
+                          -2px 2px 0 #000
+                        `,
+                      WebkitTextStroke: isMinimal ? "0.7px #000" : isNeon ? "1px #000" : isPodcast ? "none" : "2px #000",
+                    }}
+                  >
+                    Texto de{" "}
+                    <span
+                      style={{
+                        color: highlightColor,
+                        textShadow: isNeon ? "0 0 12px #ffff00, 0 0 20px #ffff00" : "inherit",
+                        fontWeight: 900,
+                      }}
+                    >
+                      ejemplo
+                    </span>{" "}
+                    en vivo
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Toggle Safe Zones */}
@@ -484,6 +574,65 @@ export default function ClipCustomizerModal({
           {/* COLUMNA DERECHA: Panel de controles */}
           <div className={styles.controlCol}>
 
+            {/* ─── SECCIÓN: FORMATO (ARRIBA) ─── */}
+            <div className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <div className={`${styles.sectionIcon} ${styles.amber}`}>
+                  <Layers size={13} />
+                </div>
+                <span className={styles.sectionTitle}>Formato de Exportación</span>
+              </div>
+
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, 1fr)",
+                gap: "6px",
+              }}>
+                {MODE_CONFIG.map((m) => {
+                  const IconComp = m.Icon;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`${styles.formatBtn} ${mode === m.id ? styles.active : ""}`}
+                      onClick={() => setMode(m.id)}
+                      style={{
+                        padding: "8px 10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "9px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: "6px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background:
+                            mode === m.id
+                              ? "rgba(56, 189, 248, 0.2)"
+                              : "rgba(255, 255, 255, 0.06)",
+                          color: mode === m.id ? "#38bdf8" : "rgba(255, 255, 255, 0.75)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <IconComp size={15} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600 }}>{m.label}</span>
+                        <span style={{ fontSize: 9, opacity: 0.6, marginTop: 1 }}>{m.desc}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <hr className={styles.sectionDivider} />
+
             {/* ─── SECCIÓN: GANCHO ─── */}
             <div className={styles.section}>
               <div className={styles.sectionHeader}>
@@ -517,6 +666,54 @@ export default function ClipCustomizerModal({
                       onChange={(e) => setHookText(e.target.value)}
                       placeholder="Escribe el gancho inicial..."
                     />
+                  </div>
+
+                  {/* Hook Theme Selector */}
+                  <div className={styles.fieldRow}>
+                    <label className={styles.fieldLabel}>Plantilla del título</label>
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gap: "6px",
+                      marginTop: "4px",
+                    }}>
+                      {(Object.entries(HOOK_THEME_CONFIG) as [HookTheme, { label: string; preview: string; fontLabel: string; desc: string }][]).map(
+                        ([id, cfg]) => {
+                          const isSelected = hookTheme === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              className={`${styles.themeBtn} ${isSelected ? styles.active : ""}`}
+                              onClick={() => setHookTheme(id)}
+                              title={cfg.desc}
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "center",
+                                gap: "3px",
+                                padding: "8px 4px",
+                                minHeight: "48px",
+                              }}
+                            >
+                              <span style={{
+                                fontSize: "11px",
+                                fontWeight: 900,
+                                fontFamily: cfg.fontLabel,
+                                color: id === "neon" ? "#00ffff"
+                                  : id === "fire" ? "#ffaa00"
+                                  : id === "badge" ? "#38bdf8"
+                                  : "#ffffff",
+                                textShadow: id === "neon" ? "0 0 8px #00ffff" : "none",
+                              }}>
+                                {cfg.preview}
+                              </span>
+                              <span style={{ fontSize: 9, opacity: 0.65 }}>{cfg.label}</span>
+                            </button>
+                          );
+                        }
+                      )}
+                    </div>
                   </div>
 
                   {/* Hook Decor Selector */}
@@ -671,39 +868,6 @@ export default function ClipCustomizerModal({
                   </div>
                 </>
               )}
-            </div>
-
-            <hr className={styles.sectionDivider} />
-
-            {/* ─── SECCIÓN: FORMATO ─── */}
-            <div className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <div className={`${styles.sectionIcon} ${styles.amber}`}>
-                  <Layers size={13} />
-                </div>
-                <span className={styles.sectionTitle}>Formato de Exportación</span>
-              </div>
-
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, 1fr)",
-                gap: "6px",
-              }}>
-                {MODE_CONFIG.map((m) => (
-                  <button
-                    key={m.id}
-                    className={`${styles.formatBtn} ${mode === m.id ? styles.active : ""}`}
-                    onClick={() => setMode(m.id)}
-                    style={{ padding: "10px 8px" }}
-                  >
-                    <span style={{ fontSize: 18, marginBottom: 2 }}>{m.icon}</span>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1 }}>
-                      <span style={{ fontSize: 11 }}>{m.label}</span>
-                      <span style={{ fontSize: 9, opacity: 0.55, marginTop: 1 }}>{m.desc}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
             </div>
 
           </div>

@@ -56,14 +56,74 @@ THEMES: dict[str, dict[str, Any]] = {
         "margin_v": 380,
     },
     "cyberpunk": {
-        "name": "Cyberpunk",
+        "name": "Impact / Cyberpunk",
+        "font": "Impact",
+        "size": 48,
+        "base_color": "&H00FFFFFF&",       # White
+        "highlight_color": "&H0000FFFF&",  # Yellow Neon
+        "outline_color": "&H00000000&",    # Deep Black
+        "outline": 5,
+        "shadow": 3,
+        "uppercase": True,
+        "margin_v": 380,
+    },
+    "impact": {
+        "name": "Impact Viral",
+        "font": "Impact",
+        "size": 48,
+        "base_color": "&H00FFFFFF&",       # White
+        "highlight_color": "&H0000FFFF&",  # Yellow Neon
+        "outline_color": "&H00000000&",    # Deep Black
+        "outline": 5,
+        "shadow": 3,
+        "uppercase": True,
+        "margin_v": 380,
+    },
+    "neon": {
+        "name": "Neon Glow",
         "font": "Impact",
         "size": 46,
         "base_color": "&H00FFFF00&",       # Cyan
-        "highlight_color": "&H00FF00FF&",  # Magenta / Hot Pink
-        "outline_color": "&H00200020&",    # Dark Purple
+        "highlight_color": "&H0000FFCC&",  # Bright Neon
+        "outline_color": "&H00000000&",
         "outline": 5,
         "shadow": 3,
+        "uppercase": True,
+        "margin_v": 380,
+    },
+    "podcast": {
+        "name": "Podcast Clean",
+        "font": "Arial",
+        "size": 38,
+        "base_color": "&H00FFFFFF&",
+        "highlight_color": "&H00F8BD38&",  # Sky Blue (BGR)
+        "outline_color": "&H00141414&",
+        "outline": 3,
+        "shadow": 1,
+        "uppercase": False,
+        "margin_v": 380,
+    },
+    "classic": {
+        "name": "Classic TV",
+        "font": "Times New Roman",
+        "size": 40,
+        "base_color": "&H00FFFFFF&",
+        "highlight_color": "&H0000FFFF&",
+        "outline_color": "&H00000000&",
+        "outline": 3,
+        "shadow": 2,
+        "uppercase": False,
+        "margin_v": 380,
+    },
+    "duotone": {
+        "name": "Duotone",
+        "font": "Helvetica",
+        "size": 42,
+        "base_color": "&H00F755A8&",       # Purple (BGR)
+        "highlight_color": "&H0000FFFF&",  # Yellow
+        "outline_color": "&H00000000&",
+        "outline": 4,
+        "shadow": 2,
         "uppercase": True,
         "margin_v": 380,
     },
@@ -113,28 +173,32 @@ def extract_words_for_clip(
                         "end": rel_end,
                     })
         else:
-            # Synthesize word timestamps by distributing duration evenly based on word lengths
+            # Synthesize word timestamps by distributing duration evenly based on word lengths across [s_start, s_end]
             words_in_text = s_text.split()
             if not words_in_text:
                 continue
 
-            seg_start_rel = max(0.0, s_start - clip_start)
-            seg_end_rel = max(seg_start_rel + 0.3, s_end - clip_start)
-            seg_dur = max(0.3, seg_end_rel - seg_start_rel)
-
             total_chars = sum(len(w) for w in words_in_text)
-            curr_t = seg_start_rel
+            seg_dur = max(0.1, s_end - s_start)
+            curr_abs_t = s_start
 
             for w in words_in_text:
                 w_len = len(w)
                 w_fraction = (w_len / total_chars) if total_chars > 0 else (1 / len(words_in_text))
-                w_dur = max(0.15, seg_dur * w_fraction)
-                clip_words.append({
-                    "word": w,
-                    "start": curr_t,
-                    "end": curr_t + w_dur,
-                })
-                curr_t += w_dur
+                w_dur = max(0.12, seg_dur * w_fraction)
+                w_start = curr_abs_t
+                w_end = curr_abs_t + w_dur
+                curr_abs_t += w_dur
+
+                # Only include words that fall within [clip_start, clip_end]
+                if w_end >= clip_start and w_start <= clip_end:
+                    rel_start = max(0.0, w_start - clip_start)
+                    rel_end = max(rel_start + 0.1, w_end - clip_start)
+                    clip_words.append({
+                        "word": w,
+                        "start": rel_start,
+                        "end": rel_end,
+                    })
 
     return clip_words
 
@@ -150,6 +214,7 @@ def generate_ass_subtitles(
     # --- Personalización dinámica desde el modal (overrides sobre el tema base) ---
     hook_title_custom: str | None = None,
     hook_duration: float | None = None,
+    hook_theme: str | None = None,
     sub_font: str | None = None,
     sub_base_color: str | None = None,
     sub_highlight_color: str | None = None,
@@ -161,6 +226,7 @@ def generate_ass_subtitles(
     Personalización dinámica:
     - hook_title_custom: sobreescribe el texto del gancho (por defecto usa clip_title).
     - hook_duration: duración en pantalla del gancho en segundos (default: 3.5s).
+    - hook_theme: estilo visual de la plantilla del gancho (impact, hormozi, badge, neon, fire, minimal).
     - sub_font: sobreescribe la fuente del tema base.
     - sub_base_color: color principal del texto en formato ASS (&H00BBGGRR&).
     - sub_highlight_color: color de la palabra resaltada en formato ASS.
@@ -185,6 +251,20 @@ def generate_ass_subtitles(
     # Duración del gancho: override o default de 3.5s
     effective_hook_duration = hook_duration if hook_duration is not None else 3.5
 
+    # Hook Title Style according to hook_theme
+    if hook_theme == "badge":
+        hook_style = "Style: HookTitle,Impact,48,&H00FFFFFF&,&H000000FF&,&H00000000&,&HCC000000&,0,0,0,0,100,100,0,0,3,4,0,8,50,50,260,1"
+    elif hook_theme == "neon":
+        hook_style = "Style: HookTitle,Impact,50,&H00FFFF00&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,5,3,8,50,50,260,1"
+    elif hook_theme == "fire":
+        hook_style = "Style: HookTitle,Arial Black,48,&H0000AAFF&,&H000000FF&,&H00000000&,&H80000000&,1,0,0,0,100,100,0,0,1,5,3,8,50,50,260,1"
+    elif hook_theme == "minimal":
+        hook_style = "Style: HookTitle,Helvetica,42,&H00FFFFFF&,&H000000FF&,&H00141414&,&H80000000&,0,0,0,0,100,100,0,0,1,3,1,8,50,50,260,1"
+    elif hook_theme == "hormozi":
+        hook_style = "Style: HookTitle,Arial Black,48,&H00FFFFFF&,&H000000FF&,&H00000000&,&H80000000&,1,0,0,0,100,100,0,0,1,5,3,8,50,50,260,1"
+    else:  # impact (default)
+        hook_style = "Style: HookTitle,Impact,50,&H00FFFFFF&,&H000000FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,5,3,8,50,50,260,1"
+
     ass_lines: list[str] = [
         "[Script Info]",
         "Title: ClipFinder Generated Subtitles",
@@ -196,9 +276,9 @@ def generate_ass_subtitles(
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         # Hook Title Style: Large, Top-centered, upper third (MarginV=260)
-        f"Style: HookTitle,Arial Black,48,&H00FFFFFF&,&H000000FF&,&H00000000&,&H80000000&,1,0,0,0,100,100,0,0,1,5,3,8,50,50,260,1",
+        hook_style,
         # Subtitle Base Style: Center-bottom, above safe zone
-        f"Style: DynamicSub,{font_name},{font_size},{base_col},&H000000FF&,{out_col},&H80000000&,1,0,0,0,100,100,1,0,1,{outline},{shadow},2,50,50,{margin_v},1",
+        f"Style: DynamicSub,{font_name},{font_size},{base_col},&H000000FF&,{out_col},&H80000000&,{0 if 'Impact' in str(font_name) else 1},0,0,0,100,100,1,0,1,{outline},{shadow},2,50,50,{margin_v},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -220,7 +300,7 @@ def generate_ass_subtitles(
         hook_end_fmt = _fmt_ass_time(effective_hook_duration)
         ass_lines.append(
             f"Dialogue: 1,0:00:00.00,{hook_end_fmt},HookTitle,,0,0,0,,{{\\fad(200,250)}}"
-            f"{{\\c&H0000FFFF&}}★ {{\\c&H00FFFFFF&}}{title_text}{{\\c&H0000FFFF&}} ★"
+            f"{{\\c&H00FFFFFF&}}{title_text}"
         )
 
     # 2. Dynamic Word-by-Word Highlight Subtitles

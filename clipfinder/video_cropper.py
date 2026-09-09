@@ -430,6 +430,7 @@ def process_clip(
     # --- Overrides de personalización del modal ---
     hook_title_custom: str | None = None,
     hook_duration: float | None = None,
+    hook_theme: str | None = None,
     sub_font: str | None = None,
     sub_base_color: str | None = None,
     sub_highlight_color: str | None = None,
@@ -486,6 +487,7 @@ def process_clip(
                     # Propagación de overrides del modal
                     hook_title_custom=hook_title_custom,
                     hook_duration=hook_duration,
+                    hook_theme=hook_theme,
                     sub_font=sub_font,
                     sub_base_color=sub_base_color,
                     sub_highlight_color=sub_highlight_color,

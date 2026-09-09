@@ -520,13 +520,16 @@ class RenderClipRequest(BaseModel):
     end_seconds: float
     title: str = "clip"
     mode: Literal["smart_vertical", "vertical_blur", "original", "split_screen", "smart_track"] = "smart_vertical"
-    subtitle_theme: Literal["hormozi", "minimal", "cyberpunk", "none"] = "hormozi"
+    subtitle_theme: Literal[
+        "hormozi", "minimal", "cyberpunk", "impact", "neon", "podcast", "classic", "duotone", "none"
+    ] = "hormozi"
     include_hook_title: bool = True
     normalize_audio: bool = True
     clip_id: int | None = None
     # --- Personalización del modal (Fase 2) ---
     hook_title_custom: str | None = None        # Texto personalizado del gancho (sobreescribe el título IA)
     hook_duration: float | None = None          # Duración en pantalla del gancho (seg, ej: 3.5)
+    hook_theme: str | None = None               # Plantilla visual del gancho (impact, hormozi, badge, neon, fire, minimal)
     sub_font: str | None = None                 # Fuente de subtítulos (debe existir en el sistema / fontsdir)
     sub_base_color: str | None = None           # Color base en formato ASS: &H00BBGGRR&
     sub_highlight_color: str | None = None      # Color de palabra activa en formato ASS
@@ -581,6 +584,7 @@ def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
             # Propagación de overrides del modal (Fase 2)
             hook_title_custom=req.hook_title_custom,
             hook_duration=req.hook_duration,
+            hook_theme=req.hook_theme,
             sub_font=req.sub_font,
             sub_base_color=req.sub_base_color,
             sub_highlight_color=req.sub_highlight_color,
@@ -847,22 +851,53 @@ async def get_video_transcript(
         for s in raw_segs:
             s_start = float(s.get("start", 0))
             s_end = float(s.get("end", 0))
-            if start_seconds is not None and end_seconds is not None:
-                overlap_start = max(s_start, start_seconds)
-                overlap_end = min(s_end, end_seconds)
-                overlap_sec = max(0.0, overlap_end - overlap_start)
-                seg_dur = max(0.1, s_end - s_start)
-                midpoint = (s_start + s_end) / 2.0
+            s_text = str(s.get("text", "")).strip()
+            if not s_text:
+                continue
 
-                # Include segment only if its center point falls within the range
-                # or if it has significant overlap (at least 40% of duration or >= 4 seconds)
-                is_in_range = (
-                    (start_seconds <= midpoint <= end_seconds)
-                    or (overlap_sec / seg_dur >= 0.40)
-                    or (overlap_sec >= 4.0)
-                )
-                if is_in_range:
-                    filtered_segs.append(s)
+            if start_seconds is not None and end_seconds is not None:
+                # Skip segments entirely outside the requested time window
+                if s_end < start_seconds or s_start > end_seconds:
+                    continue
+
+                words_data = s.get("words")
+                if words_data and len(words_data) > 0:
+                    kept_words = [
+                        str(w.get("word", "")).strip()
+                        for w in words_data
+                        if float(w.get("end", s_end)) >= start_seconds
+                        and float(w.get("start", s_start)) <= end_seconds
+                        and str(w.get("word", "")).strip()
+                    ]
+                    if kept_words:
+                        filtered_segs.append({
+                            "start": max(s_start, start_seconds),
+                            "end": min(s_end, end_seconds),
+                            "text": " ".join(kept_words),
+                        })
+                else:
+                    # Segment without word timestamps: interpolate words across duration
+                    words_in_text = s_text.split()
+                    if not words_in_text:
+                        continue
+                    total_chars = sum(len(w) for w in words_in_text)
+                    seg_dur = max(0.1, s_end - s_start)
+                    curr_abs_t = s_start
+                    kept_words = []
+                    for w in words_in_text:
+                        w_len = len(w)
+                        w_dur = (w_len / total_chars) * seg_dur if total_chars > 0 else (seg_dur / len(words_in_text))
+                        w_start = curr_abs_t
+                        w_end = curr_abs_t + w_dur
+                        curr_abs_t += w_dur
+                        if w_end >= start_seconds and w_start <= end_seconds:
+                            kept_words.append(w)
+                    if kept_words:
+                        filtered_segs.append({
+                            "start": max(s_start, start_seconds),
+                            "end": min(s_end, end_seconds),
+                            "text": " ".join(kept_words),
+                        })
             else:
                 filtered_segs.append(s)
 
