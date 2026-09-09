@@ -3,6 +3,18 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import {
+  Clock,
+  Sparkles,
+  FileText,
+  Play,
+  Film,
+  Zap,
+  ChevronDown,
+  AlertCircle,
+  ArrowLeft,
+  ExternalLink,
+} from "lucide-react";
 import YouTubePlayer, { YouTubePlayerRef } from "@/components/YoutubePlayer";
 import ClipCard, { Clip } from "@/components/ClipCard";
 import ProgressSteps from "@/components/ProgressSteps";
@@ -20,6 +32,19 @@ interface JobData {
   segments: number;
   chunk_current: number;
   chunk_total: number;
+  chunk_time_range?: string;
+  clips_found_so_far?: number;
+  live_clips?: Array<{
+    title: string;
+    score: number;
+    start_seconds: number;
+    end_seconds: number;
+    reason?: string;
+  }>;
+  transcript_preview?: Array<{
+    time: string;
+    text: string;
+  }>;
   download_pct?: number;
   download_speed?: string;
   transcribe_pct?: number;
@@ -58,10 +83,8 @@ function formatDuration(seconds: number): string {
   const s = Math.floor(seconds % 60);
   const h = Math.floor(m / 60);
   if (h > 0) return `${h}h ${m % 60}m ${s}s`;
-  return `${m}m ${s}s`;
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
-
-// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AnalyzePage({
   params,
@@ -76,7 +99,6 @@ export default function AnalyzePage({
 
   const playerRef = useRef<YouTubePlayerRef>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const clipsListRef = useRef<HTMLDivElement>(null);
 
   // ── Polling ────────────────────────────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -104,7 +126,7 @@ export default function AnalyzePage({
       setError("Error de red al consultar el estado del análisis.");
       stopPolling();
     }
-  }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobId]);
 
   function stopPolling() {
     if (intervalRef.current) {
@@ -114,12 +136,11 @@ export default function AnalyzePage({
   }
 
   useEffect(() => {
-    poll(); // immediate first call
+    poll();
     intervalRef.current = setInterval(poll, 2000);
     return () => stopPolling();
   }, [poll]);
 
-  // ── Jump to clip ────────────────────────────────────────────────────────────
   function handleJump(startSeconds: number, idx: number) {
     try {
       playerRef.current?.seekTo(startSeconds);
@@ -128,100 +149,108 @@ export default function AnalyzePage({
     }
     setActiveClipIdx(idx);
 
-    // Scroll the clicked card into view on mobile
     const card = document.getElementById(`clip-card-${idx}`);
     if (card) {
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   const clips = job?.result?.clips ?? [];
   const videoUrl = job?.url ?? "";
   const videoId = job?.video_id || extractYouTubeId(videoUrl);
   const isDone = job?.status === "done";
   const isError = job?.status === "error" || !!error;
 
+  // Calculate estimated time remaining
+  const estimatedMin =
+    job?.duration && job.duration > 0
+      ? Math.max(1, Math.round((job.duration / 60) * 0.15))
+      : 3;
+
   return (
     <div className="page-wrapper">
-      {/* Background orbs */}
+      {/* Background ambient orbs */}
       <div className="bg-orbs">
         <div className="bg-orb bg-orb-1" />
         <div className="bg-orb bg-orb-2" />
       </div>
 
-      {/* Header */}
+      {/* Top Navbar */}
       <header className={styles.header}>
-        <div className="container">
-          <div className={styles.headerInner}>
-            <Link href="/" className="logo">
-              <Image
-                src="/logo-clypfast.png"
-                alt="ClypFast"
-                width={130}
-                height={30}
-                style={{ height: "26px", width: "auto", objectFit: "contain" }}
-              />
-            </Link>
+        <div className={styles.headerInner}>
+          <Link href="/" className={styles.logoLink}>
+            <Image
+              src="/logo-clypfast.png"
+              alt="ClypFast"
+              width={140}
+              height={32}
+              className={styles.logoImg}
+              priority
+            />
+          </Link>
 
-            {isDone && (
-              <div className={styles.headerMeta}>
-                <span className={styles.metaBadge}>
-                  🎯 {clips.length} clips
-                </span>
-                {job?.result?.duration_seconds != null && (
-                  <span className={styles.metaBadge}>
-                    ⏱ {formatDuration(job.result.duration_seconds)}
-                  </span>
-                )}
-                {job?.transcription_method_used && (
-                  <span className={styles.metaBadge}>
-                    {job.transcription_method_used === "youtube_subs"
-                      ? "⚡ Subs YouTube (1s)"
-                      : job.transcription_method_used === "groq"
-                      ? "🚀 Groq Large-v3"
-                      : "💻 Whisper M3 Pro"}
-                  </span>
-                )}
-                <span className={styles.metaBadge}>
-                  🧠 {job?.result?.llm_model?.split("/").pop()}
-                </span>
-              </div>
-            )}
-
-            <Link href="/" className={styles.newAnalysisBtn} id="new-analysis-btn">
-              + Nuevo análisis
+          {/* Navigation Pills */}
+          <nav className={styles.navPillContainer}>
+            <Link href="/" className={styles.navPill}>
+              Inicio
             </Link>
+            <Link
+              href={`/analyze/${jobId}`}
+              className={`${styles.navPill} ${styles.navPillActive}`}
+            >
+              Análisis
+            </Link>
+            <Link href="/history" className={styles.navPill}>
+              Historial
+            </Link>
+            <Link href="/#configuracion" className={styles.navPill}>
+              Configuración
+            </Link>
+          </nav>
+
+          {/* User Profile Pill */}
+          <div className={styles.userPill}>
+            <div className={styles.userAvatar}>M</div>
+            <span className={styles.userName}>Marcos</span>
+            <ChevronDown size={14} className={styles.userChevron} />
           </div>
         </div>
       </header>
 
-      {/* Main content */}
+      {/* Main Container */}
       <main className={styles.main}>
         <div className="container">
-          {/* Loading / Progress state */}
+          {/* ── LOADING / IN-PROGRESS VIEW ───────────────────────────────── */}
           {!isDone && !isError && job && (
             <div className={styles.progressLayout}>
+              {/* Left Column: Progress Card with Stepper */}
               <div className={`${styles.progressCard} glass-card fade-in`}>
-                <div className={styles.progressHeader}>
-                  <h1 className={styles.progressTitle}>Analizando video...</h1>
-                  {videoId && (
-                    <p className={styles.progressUrl}>
-                      <span>🔗</span>
-                      <a
-                        href={videoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.urlLink}
-                      >
-                        {videoUrl.length > 60
-                          ? videoUrl.slice(0, 60) + "..."
-                          : videoUrl}
-                      </a>
+                <div className={styles.progressCardHeader}>
+                  <div className={styles.headerTitles}>
+                    <h1 className={styles.progressTitle}>Analizando video...</h1>
+                    <p className={styles.progressSubtitle}>
+                      Estamos procesando tu video y detectando los mejores momentos.
                     </p>
-                  )}
+                  </div>
+                  <div className={styles.timeEstBadge}>
+                    <Clock size={15} className={styles.timeIcon} />
+                    <span>Tiempo estimado</span>
+                    <strong className={styles.timeVal}>~ {estimatedMin} min</strong>
+                  </div>
                 </div>
 
+                {/* Gradient Progress Bar */}
+                <div className={styles.progressBarSection}>
+                  <div className={styles.progressBarTrack}>
+                    <div
+                      className={styles.progressBarFill}
+                      style={{ width: `${Math.max(job.progress, 5)}%` }}
+                    />
+                  </div>
+                  <span className={styles.progressBarPct}>{job.progress}%</span>
+                </div>
+
+                {/* 6-Step Connected Stepper */}
                 <ProgressSteps
                   currentStep={job.step}
                   stepLabel={job.step_label}
@@ -230,50 +259,159 @@ export default function AnalyzePage({
                   duration={job.duration}
                   chunkCurrent={job.chunk_current}
                   chunkTotal={job.chunk_total}
+                  chunkTimeRange={job.chunk_time_range}
+                  clipsFoundSoFar={
+                    job.clips_found_so_far ?? job.live_clips?.length ?? 0
+                  }
                   downloadPct={job.download_pct}
                   downloadSpeed={job.download_speed}
                   transcribePct={job.transcribe_pct}
                   transcribeSegs={job.transcribe_segs}
                   transcriptionMethodUsed={job.transcription_method_used}
+                  videoUrl={videoUrl}
                 />
 
-                <p className={styles.progressNote}>
-                  Este proceso puede tardar varios minutos dependiendo de la
-                  duración del video y el modelo Whisper seleccionado.
-                </p>
+                {/* Bottom Tip Card */}
+                <div className={styles.bottomTipCard}>
+                  <div className={styles.tipIconCircle}>
+                    <Sparkles size={16} />
+                  </div>
+                  <p className={styles.tipText}>
+                    Este proceso puede tardar unos minutos dependiendo de la
+                    duración del video. Puedes dejar esta página abierta. Te
+                    avisaremos cuando esté listo.
+                  </p>
+                </div>
               </div>
 
-              {/* Thumbnail preview while loading */}
-              {videoId && (
-                <div className={`${styles.previewCard} glass-card fade-in`}>
-                  <img
-                    src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
-                    alt="Video thumbnail"
-                    className={styles.thumbnail}
-                  />
-                  <div className={styles.thumbnailOverlay}>
-                    <span className="spinner spinner-lg" />
+              {/* Right Column: Video Preview + Live Activity Feed */}
+              <div className={styles.rightColumn}>
+                {/* Video Thumbnail Preview */}
+                {videoId && (
+                  <div className={`${styles.previewCard} glass-card fade-in`}>
+                    <img
+                      src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
+                      alt="Miniatura de video"
+                      className={styles.thumbnail}
+                    />
+                    <div className={styles.thumbnailOverlay}>
+                      <div className={styles.playCircle}>
+                        <Play size={22} fill="white" className={styles.playIcon} />
+                      </div>
+                    </div>
+                    {job.duration > 0 && (
+                      <div className={styles.durationPill}>
+                        {formatDuration(job.duration)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Live Activity Feed Card */}
+                <div className={`${styles.liveFeedCard} glass-card fade-in`}>
+                  <div className={styles.liveFeedHeader}>
+                    <div className={styles.liveFeedHeaderIcon}>
+                      {job.step === "analyze" ? (
+                        <Sparkles size={18} className={styles.cyanIcon} />
+                      ) : (
+                        <FileText size={18} className={styles.blueIcon} />
+                      )}
+                    </div>
+                    <div className={styles.liveFeedHeaderText}>
+                      <h3 className={styles.liveFeedTitle}>
+                        {job.step === "analyze"
+                          ? "Análisis de momentos virales"
+                          : "Transcripción en progreso"}
+                      </h3>
+                      <p className={styles.liveFeedSubtitle}>
+                        {job.step === "analyze"
+                          ? `Gemini 3.5 Flash Lite está evaluando ganchos y retención${
+                              job.chunk_time_range
+                                ? ` en sección ${job.chunk_time_range}`
+                                : ""
+                            }`
+                          : "La IA está procesando el contenido del video en tiempo real."}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Feed Container */}
+                  <div className={styles.liveFeedContent}>
+                    {job.step === "analyze" &&
+                    job.live_clips &&
+                    job.live_clips.length > 0 ? (
+                      <div className={styles.liveClipsList}>
+                        <div className={styles.liveClipsCountBadge}>
+                          <Sparkles size={13} />
+                          <span>
+                            {job.live_clips.length} momentos candidatos
+                            detectados
+                          </span>
+                        </div>
+                        {job.live_clips.map((c, idx) => (
+                          <div key={idx} className={styles.liveClipItem}>
+                            <div className={styles.liveClipTop}>
+                              <span className={styles.liveClipScore}>
+                                Score {c.score}/10
+                              </span>
+                              <span className={styles.liveClipTime}>
+                                {formatDuration(c.start_seconds)} -{" "}
+                                {formatDuration(c.end_seconds)}
+                              </span>
+                            </div>
+                            <p className={styles.liveClipTitle}>{c.title}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : job.transcript_preview &&
+                      job.transcript_preview.length > 0 ? (
+                      <div className={styles.transcriptLines}>
+                        {job.transcript_preview.map((line, idx) => (
+                          <div key={idx} className={styles.transcriptLine}>
+                            <span className={styles.transcriptTime}>
+                              {line.time}
+                            </span>
+                            <span className={styles.transcriptText}>
+                              {line.text}
+                            </span>
+                          </div>
+                        ))}
+                        <div className={styles.transcriptDots}>...</div>
+                      </div>
+                    ) : (
+                      <div className={styles.feedEmpty}>
+                        <div className={styles.pulseIndicator} />
+                        <span>
+                          {job.step === "download"
+                            ? "Descargando pista de audio 16kHz mono..."
+                            : "Esperando fragmentos de audio para transcribir..."}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
-          {/* Error state */}
+          {/* ── ERROR STATE ────────────────────────────────────────────── */}
           {isError && (
             <div className={`${styles.errorCard} glass-card fade-in`}>
-              <span className={styles.errorIcon}>⚠️</span>
+              <div className={styles.errorIconCircle}>
+                <AlertCircle size={28} className={styles.errorAlertIcon} />
+              </div>
               <h2 className={styles.errorTitle}>Error en el análisis</h2>
               <p className={styles.errorMsg}>
-                {error || job?.error || "Error desconocido"}
+                {error || job?.error || "Error desconocido durante el procesamiento"}
               </p>
-              <Link href="/" className="btn-primary" style={{ marginTop: 8 }}>
-                ← Volver al inicio
+              <Link href="/" className="btn-primary" style={{ marginTop: 12 }}>
+                <ArrowLeft size={16} style={{ marginRight: 6 }} />
+                Volver al inicio
               </Link>
             </div>
           )}
 
-          {/* Results state */}
+          {/* ── RESULTS VIEW (WHEN DONE) ────────────────────────────────── */}
           {isDone && (
             <div className={`${styles.resultsLayout} fade-in`}>
               {/* Left: Video player (sticky) */}
@@ -287,10 +425,15 @@ export default function AnalyzePage({
                     />
                   ) : (
                     <div className={styles.noEmbed}>
-                      <span>🎬</span>
+                      <Film size={32} />
                       <p>Este video no puede embeberse directamente.</p>
-                      <a href={videoUrl} target="_blank" rel="noopener noreferrer">
-                        Ver en YouTube →
+                      <a
+                        href={videoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.externalLink}
+                      >
+                        Ver en YouTube <ExternalLink size={14} />
                       </a>
                     </div>
                   )}
@@ -319,60 +462,48 @@ export default function AnalyzePage({
                   {clips.length > 0 && (
                     <div className={styles.statCard}>
                       <span className={styles.statValue}>
-                        {clips[0].score}/10
+                        {Math.max(...clips.map((c) => c.score))}/10
                       </span>
-                      <span className={styles.statLabel}>top score</span>
+                      <span className={styles.statLabel}>score máx</span>
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Right: Clips list */}
-              <div className={styles.clipsSection} ref={clipsListRef}>
+              <div className={styles.clipsSection}>
                 <div className={styles.clipsHeader}>
-                  <h2 className={styles.clipsTitle}>
-                    🎯{" "}
-                    <span className="gradient-text">
-                      {clips.length} Momentos Virales
-                    </span>
-                  </h2>
-                  <p className={styles.clipsSubtitle}>
-                    Haz clic en un clip para saltar al momento en el video
-                  </p>
+                  <div>
+                    <h2 className={styles.clipsTitle}>Clips virales detectados</h2>
+                    <p className={styles.clipsSubtitle}>
+                      Ordenados por probabilidad de retención y viralidad
+                    </p>
+                  </div>
+                  <Link href="/" className={styles.newAnalysisBtn}>
+                    + Nuevo análisis
+                  </Link>
                 </div>
 
                 {clips.length === 0 ? (
-                  <div className={`${styles.noClips} glass-card`}>
-                    <span>😔</span>
-                    <p>No se detectaron clips virales en este video.</p>
-                    <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-                      Intenta con un modelo Whisper más grande o un video con más habla.
-                    </p>
+                  <div className={`${styles.emptyClips} glass-card`}>
+                    <Film size={24} />
+                    <p>No se encontraron clips virales para este video.</p>
                   </div>
                 ) : (
                   <div className={styles.clipsList}>
-                    {clips.map((clip, i) => (
+                    {clips.map((clip, idx) => (
                       <ClipCard
-                        key={i}
+                        key={idx}
                         clip={clip}
-                        index={i}
-                        isActive={activeClipIdx === i}
-                        onJump={(s) => handleJump(s, i)}
-                        videoId={videoId ?? undefined}
+                        index={idx}
+                        isActive={activeClipIdx === idx}
+                        onJump={() => handleJump(clip.start_seconds, idx)}
                         videoUrl={videoUrl}
                       />
                     ))}
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Initial loading state (before first poll) */}
-          {!job && !error && (
-            <div className={styles.initialLoading}>
-              <span className="spinner spinner-lg" />
-              <p>Conectando con el servidor...</p>
             </div>
           )}
         </div>

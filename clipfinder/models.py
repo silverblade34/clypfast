@@ -27,6 +27,7 @@ class Video(SQLModel, table=True):
     source_url: Optional[str] = None
     source_path: Optional[str] = None
     cliente: Optional[str] = None
+    channel: Optional[str] = None
     title: Optional[str] = None
     duration_seconds: float = 0.0
     created_at: datetime = Field(default_factory=_utc_now)

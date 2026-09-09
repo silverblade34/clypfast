@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+logger = logging.getLogger(__name__)
 
 
 def is_url(source: str) -> bool:
@@ -145,3 +148,45 @@ def _convert_to_wav(input_path: Path, output_path: Path) -> None:
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([str(input_path)])
+
+
+def extract_media_metadata(source: str) -> dict[str, Any]:
+    """
+    Extract metadata (title, channel, duration) without downloading the media.
+    Works for both YouTube URLs and local file paths.
+    """
+    import yt_dlp
+
+    if is_url(source):
+        opts: Any = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(source, download=False)
+                if info:
+                    channel = (
+                        info.get("channel")
+                        or info.get("uploader")
+                        or info.get("uploader_id")
+                    )
+                    title = info.get("title")
+                    duration = float(info.get("duration") or 0)
+                    return {
+                        "title": title,
+                        "channel": channel,
+                        "duration": duration,
+                    }
+        except Exception as exc:
+            logger.warning("Failed to extract metadata for %s: %s", source, exc)
+    else:
+        p = Path(source)
+        return {
+            "title": p.stem,
+            "channel": None,
+            "duration": 0.0,
+        }
+
+    return {"title": None, "channel": None, "duration": 0.0}

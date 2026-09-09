@@ -17,6 +17,7 @@ import styles from "../../[jobId]/page.module.css";
 interface VideoRecord {
   id: number;
   title: string;
+  channel?: string | null;
   source_url: string | null;
   duration_seconds: number;
   cliente: string | null;
@@ -146,9 +147,29 @@ export default function DbAnalyzePage({
               </div>
             )}
 
-            <Link href="/" className={styles.newAnalysisBtn} id="new-analysis-btn">
-              + Nuevo análisis
-            </Link>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Link
+                href="/history"
+                style={{
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  borderRadius: 8,
+                  background: "rgba(255, 255, 255, 0.08)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text-muted)",
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontWeight: 600,
+                }}
+              >
+                📂 Historial
+              </Link>
+              <Link href="/" className={styles.newAnalysisBtn} id="new-analysis-btn">
+                + Nuevo análisis
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -178,7 +199,97 @@ export default function DbAnalyzePage({
 
           {/* Resultado */}
           {!loading && !error && video && (
-            <div className={`${styles.resultsLayout} fade-in`}>
+            <>
+              {/* Video Title & Channel Header */}
+              <div
+                className="glass-card fade-in"
+                style={{
+                  padding: "16px 22px",
+                  marginBottom: 20,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 6,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {video.channel && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "3px 9px",
+                          background: "rgba(34, 211, 238, 0.15)",
+                          color: "var(--cyan)",
+                          borderRadius: 6,
+                          border: "1px solid rgba(34, 211, 238, 0.25)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        📺 {video.channel}
+                      </span>
+                    )}
+                    {video.cliente && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "3px 8px",
+                          background: "rgba(167, 139, 250, 0.2)",
+                          color: "#a78bfa",
+                          borderRadius: 6,
+                        }}
+                      >
+                        🏷️ {video.cliente}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      📅 {new Date(video.created_at).toLocaleDateString("es-ES", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </div>
+
+                  <h1 style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: 0, lineHeight: 1.3 }}>
+                    {video.title || `Video #${video.id}`}
+                  </h1>
+                </div>
+
+                {video.source_url && (
+                  <a
+                    href={video.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: "var(--cyan)",
+                      textDecoration: "none",
+                      fontSize: 13,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ↗ Ver en YouTube
+                  </a>
+                )}
+              </div>
+
+              <div className={`${styles.resultsLayout} fade-in`}>
 
               {/* Izquierda: Player */}
               <div className={styles.playerSection}>
@@ -269,6 +380,7 @@ export default function DbAnalyzePage({
               </div>
 
             </div>
+            </>
           )}
 
         </div>

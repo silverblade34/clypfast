@@ -9,6 +9,7 @@ interface VideoData {
   source_url: string | null;
   source_path: string | null;
   cliente: string | null;
+  channel?: string | null;
   title: string | null;
   duration_seconds: number;
   created_at: string;
@@ -34,6 +35,8 @@ interface ClipData {
   hashtags: string | null;
   output_path: string | null;
   video_source?: string;
+  video_title?: string;
+  channel?: string;
   cliente?: string;
 }
 
@@ -351,22 +354,48 @@ export default function HistoryPage() {
                     key={vid.id}
                     className="glass-card"
                     style={{
-                      padding: "18px 22px",
+                      padding: "20px 24px",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      gap: 16,
+                      gap: 20,
                       flexWrap: "wrap",
                     }}
                   >
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                    <div style={{ flex: "1 1 420px" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginBottom: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {vid.channel && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              padding: "3px 9px",
+                              background: "rgba(34, 211, 238, 0.12)",
+                              color: "var(--cyan)",
+                              borderRadius: 6,
+                              border: "1px solid rgba(34, 211, 238, 0.25)",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                          >
+                            📺 {vid.channel}
+                          </span>
+                        )}
                         {vid.cliente && (
                           <span
                             style={{
                               fontSize: 11,
                               fontWeight: 700,
-                              padding: "2px 8px",
+                              padding: "3px 8px",
                               background: "rgba(167, 139, 250, 0.2)",
                               color: "#a78bfa",
                               borderRadius: 6,
@@ -375,14 +404,43 @@ export default function HistoryPage() {
                             🏷️ {vid.cliente}
                           </span>
                         )}
-                        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-                          {vid.title || "Video"}
-                        </span>
                       </div>
 
-                      <div style={{ display: "flex", gap: 12, fontSize: 12, color: "var(--text-muted)" }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Link
+                          href={`/analyze/db/${vid.id}`}
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 700,
+                            color: "#fff",
+                            textDecoration: "none",
+                            lineHeight: 1.4,
+                            display: "inline-block",
+                          }}
+                          title="Haz clic para entrar al panel de clips"
+                        >
+                          {vid.title || `Video #${vid.id}`}
+                        </Link>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 14,
+                          fontSize: 12,
+                          color: "var(--text-muted)",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <span>⏱ {formatDuration(vid.duration_seconds)}</span>
-                        <span>📅 {new Date(vid.created_at).toLocaleDateString()}</span>
+                        <span>
+                          📅 {new Date(vid.created_at).toLocaleDateString("es-ES", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </span>
                         {vid.source_url && (
                           <a
                             href={vid.source_url}
@@ -396,48 +454,76 @@ export default function HistoryPage() {
                       </div>
                     </div>
 
-                    {/* Status Pill Summary */}
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <span
+                    {/* Status Pill Summary & Action Button */}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 12,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            fontSize: 12,
+                            padding: "4px 10px",
+                            borderRadius: 99,
+                            background: "rgba(34, 211, 238, 0.12)",
+                            color: "var(--cyan)",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {vid.clips_count} clips
+                        </span>
+
+                        {vid.status_summary?.subtitulado > 0 && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: "3px 8px",
+                              borderRadius: 99,
+                              background: "rgba(167, 139, 250, 0.2)",
+                              color: "#a78bfa",
+                            }}
+                          >
+                            🟣 {vid.status_summary.subtitulado} listos
+                          </span>
+                        )}
+
+                        {vid.status_summary?.en_revision > 0 && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: "3px 8px",
+                              borderRadius: 99,
+                              background: "rgba(245, 158, 11, 0.2)",
+                              color: "#f59e0b",
+                            }}
+                          >
+                            🟠 {vid.status_summary.en_revision} en revisión
+                          </span>
+                        )}
+                      </div>
+
+                      <Link
+                        href={`/analyze/db/${vid.id}`}
+                        className="btn-primary"
                         style={{
-                          fontSize: 12,
-                          padding: "4px 10px",
-                          borderRadius: 99,
-                          background: "rgba(34, 211, 238, 0.12)",
-                          color: "var(--cyan)",
+                          padding: "8px 16px",
+                          fontSize: 13,
+                          textDecoration: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          borderRadius: 8,
                           fontWeight: 600,
+                          whiteSpace: "nowrap",
                         }}
+                        id={`open-panel-${vid.id}`}
                       >
-                        {vid.clips_count} clips
-                      </span>
-
-                      {vid.status_summary?.subtitulado > 0 && (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            padding: "3px 8px",
-                            borderRadius: 99,
-                            background: "rgba(167, 139, 250, 0.2)",
-                            color: "#a78bfa",
-                          }}
-                        >
-                          🟣 {vid.status_summary.subtitulado} listos
-                        </span>
-                      )}
-
-                      {vid.status_summary?.en_revision > 0 && (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            padding: "3px 8px",
-                            borderRadius: 99,
-                            background: "rgba(245, 158, 11, 0.2)",
-                            color: "#f59e0b",
-                          }}
-                        >
-                          🟠 {vid.status_summary.en_revision} en revisión
-                        </span>
-                      )}
+                        🎬 Abrir panel de clips →
+                      </Link>
                     </div>
                   </div>
                 ))
@@ -564,14 +650,23 @@ export default function HistoryPage() {
                             )}
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(c.id, fullCopy)}
-                            className="btn-secondary"
-                            style={{ padding: "4px 10px", fontSize: 11, whiteSpace: "nowrap" }}
-                          >
-                            {copiedId === c.id ? "✓ Copiado" : "📋 Copiar"}
-                          </button>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <Link
+                              href={`/analyze/db/${c.video_id}`}
+                              className="btn-secondary"
+                              style={{ padding: "4px 10px", fontSize: 11, textDecoration: "none", whiteSpace: "nowrap" }}
+                            >
+                              🎬 Abrir en panel →
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(c.id, fullCopy)}
+                              className="btn-secondary"
+                              style={{ padding: "4px 10px", fontSize: 11, whiteSpace: "nowrap" }}
+                            >
+                              {copiedId === c.id ? "✓ Copiado" : "📋 Copiar"}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

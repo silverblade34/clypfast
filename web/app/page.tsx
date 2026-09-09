@@ -174,7 +174,7 @@ export default function HomePage() {
           transcription_engine: transcriptionEngine,
           whisper_model: whisperModel,
           max_clips: Number(maxClips),
-          provider: "groq",
+          provider: "gemini",
         }),
       });
 

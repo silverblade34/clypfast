@@ -67,7 +67,7 @@ class AnalyzeRequest(BaseModel):
     whisper_model: str = "small"
     max_clips: int = 12
     language: str | None = None
-    provider: str = "groq"
+    provider: str = "gemini"
     cliente: str | None = None
     content_type: str = "general"
 
@@ -78,11 +78,11 @@ class AnalyzeRequest(BaseModel):
 def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
     """Run the full ClipFinder pipeline and update job progress."""
     try:
-        from clipfinder.downloader import download_audio, get_source_id, is_url
+        from clipfinder.downloader import download_audio, extract_media_metadata, get_source_id, is_url
         from clipfinder.subtitles import fetch_youtube_subtitles
         from clipfinder.groq_whisper import transcribe_with_groq
         from clipfinder.transcriber import transcribe
-        from clipfinder.analyzer import GEMINI_MODELS, GROQ_MODELS, analyze_segments
+        from clipfinder.analyzer import GEMINI_MODELS, GROQ_MODELS, analyze_segments, chunk_segments
         from clipfinder.models import AnalysisResult
         from clipfinder.report import save_all
 
@@ -93,12 +93,34 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             _update_job(job_id, status="error", error=f"Missing {env_key} in .env")
             return
 
+        groq_key = os.getenv("GROQ_API_KEY")
+
         video_id = get_source_id(req.url)
         output_dir = Path("outputs") / video_id
         duration = 0.0
         segments = []
         method_used = None
         audio_path: Path | None = None
+        video_title: str = f"Video {video_id}"
+        video_channel: str | None = None
+
+        # Extract real title and channel early
+        try:
+            meta = extract_media_metadata(req.url)
+            if meta.get("title"):
+                video_title = meta["title"]
+            if meta.get("channel"):
+                video_channel = meta["channel"]
+            if duration == 0 and meta.get("duration"):
+                duration = meta["duration"]
+        except Exception as meta_exc:
+            logger.warning("Failed to extract early video metadata: %s", meta_exc)
+
+        _update_job(
+            job_id,
+            video_title=video_title,
+            video_channel=video_channel,
+        )
 
         # ── Step 0: Try Instant YouTube Subtitles ────────────────────────────
         if req.transcription_engine in ("auto", "youtube_subs") and is_url(req.url):
@@ -113,6 +135,13 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             if subs_data:
                 segments, duration = subs_data
                 method_used = "youtube_subs"
+                transcript_preview = [
+                    {
+                        "time": f"{int(s.start // 60):02d}:{int(s.start % 60):02d}",
+                        "text": s.text.strip(),
+                    }
+                    for s in segments[:35]
+                ]
                 _update_job(
                     job_id,
                     step="transcribe_done",
@@ -121,6 +150,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     segments=len(segments),
                     duration=round(duration, 1),
                     transcription_method_used="youtube_subs",
+                    transcript_preview=transcript_preview,
                 )
             elif req.transcription_engine == "youtube_subs":
                 _update_job(
@@ -165,42 +195,37 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             def on_transcribe(pct: int, n_segs: int) -> None:
                 _update_job(
                     job_id,
+                    step="transcribe",
                     transcribe_pct=pct,
                     transcribe_segs=n_segs,
-                    progress=30 + int(pct * 0.32),
+                    progress=35 + int(pct * 0.25),
                 )
 
-            use_groq = req.transcription_engine == "groq" or (
-                req.transcription_engine == "auto" and bool(os.getenv("GROQ_API_KEY"))
+            use_groq_whisper = (
+                (req.transcription_engine == "groq")
+                or (req.transcription_engine == "auto" and bool(groq_key))
             )
 
-            if use_groq:
-                try:
-                    _update_job(
-                        job_id,
-                        step="transcribe",
-                        step_label="Transcribiendo con Groq Whisper Cloud (Large-v3)...",
-                        progress=35,
-                        transcribe_pct=0,
-                        transcribe_segs=0,
-                    )
-                    segments, audio_dur = transcribe_with_groq(
-                        audio_path,
-                        api_key=os.getenv("GROQ_API_KEY"),
-                        language=req.language,
-                        model="whisper-large-v3-turbo",
-                        progress_callback=on_transcribe,
-                    )
-                    method_used = "groq"
-                    if duration == 0:
-                        duration = audio_dur
-                except Exception as exc:
-                    if req.transcription_engine == "groq":
-                        raise exc
-                    logger.warning("Groq Whisper failed; falling back to local: %s", exc)
-                    use_groq = False
-
-            if not use_groq:
+            if use_groq_whisper:
+                _update_job(
+                    job_id,
+                    step="transcribe",
+                    step_label="Transcribiendo con Groq Whisper Cloud (Large-v3-Turbo)...",
+                    progress=35,
+                    transcribe_pct=10,
+                    transcribe_segs=0,
+                )
+                segments, audio_dur = transcribe_with_groq(
+                    audio_path,
+                    api_key=groq_key,
+                    language=req.language or "es",
+                    model="whisper-large-v3-turbo",
+                    progress_callback=on_transcribe,
+                )
+                method_used = "groq"
+                if duration == 0:
+                    duration = audio_dur
+            else:
                 _update_job(
                     job_id,
                     step="transcribe",
@@ -221,6 +246,14 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 if duration == 0:
                     duration = audio_dur
 
+            transcript_preview = [
+                {
+                    "time": f"{int(s.start // 60):02d}:{int(s.start % 60):02d}",
+                    "text": s.text.strip(),
+                }
+                for s in segments[:35]
+            ]
+
             _update_job(
                 job_id,
                 step="transcribe_done",
@@ -228,6 +261,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 segments=len(segments),
                 duration=round(duration, 1),
                 transcription_method_used=method_used,
+                transcript_preview=transcript_preview,
             )
 
         # ── Step 3: LLM analysis ─────────────────────────────────────────────
@@ -235,21 +269,46 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             GROQ_MODELS["default"] if req.provider == "groq" else GEMINI_MODELS["default"]
         )
 
+        analysis_chunks = chunk_segments(segments)
+        initial_chunk_range = (
+            f"00:00 - {int(min(duration, 300) // 60):02d}:{int(min(duration, 300) % 60):02d}"
+            if duration > 0 else "00:00 - 05:00"
+        )
+
         _update_job(
             job_id,
             step="analyze",
             step_label=f"Analizando con {req.provider.upper()} ({model_name} • {req.content_type})...",
             progress=65,
+            chunk_current=1,
+            chunk_total=len(analysis_chunks),
+            chunk_time_range=initial_chunk_range,
+            clips_found_so_far=0,
+            live_clips=[],
         )
 
-        def on_chunk(current: int, total: int, err: str | None = None) -> None:
+        def on_chunk(
+            current: int,
+            total: int,
+            err: str | None = None,
+            chunk_info: dict[str, Any] | None = None,
+        ) -> None:
             pct = 65 + int((current / total) * 25) if total else 65
-            _update_job(
-                job_id,
-                progress=pct,
-                chunk_current=current,
-                chunk_total=total,
-            )
+            updates: dict[str, Any] = {
+                "progress": pct,
+                "chunk_current": current,
+                "chunk_total": total,
+            }
+            if chunk_info:
+                updates["chunk_time_range"] = chunk_info.get("chunk_time_range", "")
+                updates["clips_found_so_far"] = chunk_info.get("clips_found_so_far", 0)
+                updates["live_clips"] = chunk_info.get("latest_clips", [])
+                time_r = chunk_info.get("chunk_time_range", "")
+                n_clips = chunk_info.get("clips_found_so_far", 0)
+                updates["step_label"] = (
+                    f"Analizando bloque {current}/{total} ({time_r}) • {n_clips} clips detectados..."
+                )
+            _update_job(job_id, **updates)
 
         clips = analyze_segments(
             segments=segments,
@@ -261,7 +320,22 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             progress_callback=on_chunk,
         )
 
-        _update_job(job_id, step="analyze_done", progress=90)
+        _update_job(
+            job_id,
+            step="analyze_done",
+            progress=90,
+            clips_found_so_far=len(clips),
+            live_clips=[
+                {
+                    "title": c.title,
+                    "score": c.score,
+                    "start_seconds": c.start_seconds,
+                    "end_seconds": c.end_seconds,
+                    "reason": c.reason,
+                }
+                for c in clips
+            ],
+        )
 
         # ── Step 4: Save reports ─────────────────────────────────────────────
         _update_job(job_id, step="saving", step_label="Guardando reportes...", progress=92)
@@ -296,7 +370,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     source_url=req.url if is_url(req.url) else None,
                     source_path=req.url if not is_url(req.url) else None,
                     cliente=req.cliente,
-                    title=f"Video {video_id}",
+                    channel=video_channel,
+                    title=video_title,
                     duration_seconds=duration,
                 )
                 db_session.add(db_vid)
@@ -335,6 +410,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
         res_dict = result.model_dump()
         res_dict["clips"] = clips_data
         res_dict["video_db_id"] = db_video_id
+        res_dict["video_title"] = video_title
+        res_dict["video_channel"] = video_channel
 
         _update_job(
             job_id,
@@ -669,6 +746,7 @@ async def lookup_video_by_url(url: str) -> dict[str, Any]:
                     "found": True,
                     "id": v.id,
                     "title": v.title,
+                    "channel": v.channel,
                     "source_url": v.source_url,
                     "duration_seconds": v.duration_seconds,
                     "created_at": v.created_at.isoformat(),
@@ -692,6 +770,7 @@ async def get_video(video_id: int) -> dict[str, Any]:
         return {
             "id": v.id,
             "title": v.title,
+            "channel": v.channel,
             "source_url": v.source_url,
             "duration_seconds": v.duration_seconds,
             "cliente": v.cliente,
@@ -786,6 +865,8 @@ async def filter_clips(status: str | None = None, cliente: str | None = None) ->
             if c.video:
                 c_dict["video_source"] = c.video.source_url or c.video.source_path
                 c_dict["cliente"] = c.video.cliente
+                c_dict["video_title"] = c.video.title
+                c_dict["channel"] = c.video.channel
             results.append(c_dict)
         return results
 

@@ -21,10 +21,10 @@ GROQ_MODELS = {
 }
 
 GEMINI_MODELS = {
-    "fast": "gemini-2.0-flash",
-    "balanced": "gemini-1.5-pro",
-    "smart": "gemini-2.0-pro",
-    "default": "gemini-2.0-flash",
+    "fast": "gemini-3.5-flash-lite",
+    "balanced": "gemini-3.5-flash-lite",
+    "smart": "gemini-3.5-flash-lite",
+    "default": "gemini-3.5-flash-lite",
 }
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
@@ -416,6 +416,10 @@ def analyze_segments(
 
     for i, chunk in enumerate(chunks, 1):
         error_msg: str | None = None
+        start_s = chunk[0].start if chunk else 0.0
+        end_s = chunk[-1].end if chunk else 0.0
+        time_range = f"{int(start_s // 60):02d}:{int(start_s % 60):02d} - {int(end_s // 60):02d}:{int(end_s % 60):02d}"
+
         try:
             transcript_text = format_segments(chunk)
             chunk_clips = caller(
@@ -430,7 +434,26 @@ def analyze_segments(
             error_msg = str(exc)[:120]
 
         if progress_callback:
-            progress_callback(i, total, error_msg)
+            chunk_info = {
+                "chunk_current": i,
+                "chunk_total": total,
+                "chunk_time_range": time_range,
+                "clips_found_so_far": len(all_clips),
+                "latest_clips": [
+                    {
+                        "title": c.title,
+                        "score": c.score,
+                        "start_seconds": c.start_seconds,
+                        "end_seconds": c.end_seconds,
+                        "reason": c.reason,
+                    }
+                    for c in all_clips
+                ],
+            }
+            try:
+                progress_callback(i, total, error_msg, chunk_info)  # type: ignore[call-arg]
+            except TypeError:
+                progress_callback(i, total, error_msg)
 
     # Deduplicate, sort, and limit
     all_clips = _deduplicate(all_clips)

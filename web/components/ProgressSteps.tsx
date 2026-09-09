@@ -1,54 +1,112 @@
 "use client";
 
+import { Check } from "lucide-react";
 import styles from "./ProgressSteps.module.css";
 
-export interface Step {
+export interface PipelineStepDef {
   key: string;
+  stepNumber: number;
   label: string;
-  icon: string;
+  defaultDesc: string;
+  defaultTime: string;
+  activeWhen: string[];
   doneWhen: string[];
 }
 
-export const PIPELINE_STEPS: Step[] = [
+export const PIPELINE_STEPS: PipelineStepDef[] = [
+  {
+    key: "video_loaded",
+    stepNumber: 1,
+    label: "Video cargado",
+    defaultDesc: "Verificando enlace y origen de video",
+    defaultTime: "00:03",
+    activeWhen: [],
+    doneWhen: [
+      "starting",
+      "subtitles",
+      "download",
+      "download_done",
+      "transcribe",
+      "transcribe_done",
+      "analyze",
+      "analyze_done",
+      "saving",
+      "done",
+    ],
+  },
   {
     key: "download",
+    stepNumber: 2,
     label: "Descarga de audio",
-    icon: "📥",
-    doneWhen: ["download_done", "transcribe", "transcribe_done", "analyze", "analyze_done", "saving", "done"],
+    defaultDesc: "Extrayendo pista de audio (16kHz mono)",
+    defaultTime: "00:21",
+    activeWhen: ["download"],
+    doneWhen: [
+      "download_done",
+      "transcribe",
+      "transcribe_done",
+      "analyze",
+      "analyze_done",
+      "saving",
+      "done",
+    ],
   },
   {
     key: "transcribe",
-    label: "Transcripción con Whisper",
-    icon: "🎙️",
-    doneWhen: ["transcribe_done", "analyze", "analyze_done", "saving", "done"],
+    stepNumber: 3,
+    label: "Transcripción con IA",
+    defaultDesc: "Convirtiendo audio en texto con timestamps...",
+    defaultTime: "~ 1 min",
+    activeWhen: ["transcribe", "subtitles"],
+    doneWhen: [
+      "transcribe_done",
+      "analyze",
+      "analyze_done",
+      "saving",
+      "done",
+    ],
   },
   {
     key: "analyze",
-    label: "Detección de momentos virales (IA)",
-    icon: "🧠",
-    doneWhen: ["analyze_done", "saving", "done"],
+    stepNumber: 4,
+    label: "Análisis de contenido",
+    defaultDesc: "Detectando temas, hooks y momentos clave",
+    defaultTime: "--:--",
+    activeWhen: ["analyze"],
+    doneWhen: [
+      "analyze_done",
+      "saving",
+      "done",
+    ],
+  },
+  {
+    key: "clips",
+    stepNumber: 5,
+    label: "Generación de clips",
+    defaultDesc: "Creando los mejores momentos",
+    defaultTime: "--:--",
+    activeWhen: ["analyze_done"],
+    doneWhen: [
+      "saving",
+      "done",
+    ],
   },
   {
     key: "saving",
-    label: "Generando reporte de clips",
-    icon: "📊",
+    stepNumber: 6,
+    label: "Finalizando",
+    defaultDesc: "Preparando tu reporte",
+    defaultTime: "--:--",
+    activeWhen: ["saving"],
     doneWhen: ["done"],
   },
 ];
 
 type StepState = "pending" | "active" | "done";
 
-function getStepState(step: Step, currentStep: string): StepState {
+function getStepState(step: PipelineStepDef, currentStep: string): StepState {
   if (step.doneWhen.includes(currentStep)) return "done";
-  if (
-    step.key === currentStep ||
-    (step.key === "download" && currentStep === "starting") ||
-    (step.key === "transcribe" && currentStep === "transcribe") ||
-    (step.key === "analyze" && currentStep === "analyze") ||
-    (step.key === "saving" && currentStep === "saving")
-  ) {
-    return "active";
-  }
+  if (step.activeWhen.includes(currentStep)) return "active";
   return "pending";
 }
 
@@ -60,191 +118,179 @@ interface Props {
   duration?: number;
   chunkCurrent?: number;
   chunkTotal?: number;
+  chunkTimeRange?: string;
+  clipsFoundSoFar?: number;
   downloadPct?: number;
   downloadSpeed?: string;
   transcribePct?: number;
   transcribeSegs?: number;
   transcriptionMethodUsed?: "youtube_subs" | "groq" | "local" | null;
-}
-
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  videoUrl?: string;
 }
 
 export default function ProgressSteps({
   currentStep,
-  stepLabel,
   progress,
   segments,
   duration,
-  chunkCurrent,
-  chunkTotal,
+  chunkCurrent = 1,
+  chunkTotal = 1,
+  chunkTimeRange = "",
+  clipsFoundSoFar = 0,
   downloadPct = 0,
   downloadSpeed = "",
   transcribePct = 0,
   transcribeSegs = 0,
   transcriptionMethodUsed = null,
+  videoUrl = "",
 }: Props) {
   return (
     <div className={styles.wrapper}>
-      {/* Overall Progress bar */}
-      <div className={styles.progressSection}>
-        <div className={styles.progressHeader}>
-          <div className={styles.progressLabelGroup}>
-            <span className={styles.pulseDot} />
-            <span className={styles.progressLabel}>{stepLabel}</span>
-          </div>
-          <span className={styles.progressPct}>{progress}%</span>
-        </div>
-        <div className="progress-bar-track">
-          <div
-            className={`progress-bar-fill ${styles.animatedFill}`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Steps with granular real-time feedback */}
+      {/* Steps List */}
       <div className={styles.steps}>
         {PIPELINE_STEPS.map((step, i) => {
           const state = getStepState(step, currentStep);
           const isDownload = step.key === "download";
           const isTranscribe = step.key === "transcribe";
           const isAnalyze = step.key === "analyze";
+          const isClips = step.key === "clips";
+
+          // Calculate display text & time badge
+          let stepSubtitle = step.defaultDesc;
+          let timeBadge = step.defaultTime;
+
+          if (step.key === "video_loaded" && videoUrl) {
+            stepSubtitle = videoUrl.length > 38 ? videoUrl.slice(0, 38) + "..." : videoUrl;
+            timeBadge = "00:03";
+          }
+
+          if (isDownload) {
+            if (state === "done") {
+              if (transcriptionMethodUsed === "youtube_subs") {
+                stepSubtitle = "Subtítulos directos de YouTube (sin descarga)";
+                timeBadge = "00:01";
+              } else {
+                stepSubtitle = "Pista de audio 16kHz mono extraída";
+                timeBadge = "00:21";
+              }
+            } else if (state === "active") {
+              stepSubtitle = `Descargando audio... ${downloadPct}% ${downloadSpeed ? `(${downloadSpeed})` : ""}`;
+            }
+          }
+
+          if (isTranscribe) {
+            if (state === "done") {
+              if (transcriptionMethodUsed === "youtube_subs") {
+                stepSubtitle = `Subtítulos oficiales de YouTube (${segments ?? 0} segmentos)`;
+                timeBadge = "00:01";
+              } else if (transcriptionMethodUsed === "groq") {
+                stepSubtitle = `Groq Whisper Cloud (${segments ?? 0} segmentos)`;
+                timeBadge = "00:06";
+              } else {
+                stepSubtitle = `Whisper local M3 Pro (${segments ?? 0} segmentos)`;
+                timeBadge = "00:45";
+              }
+            } else if (state === "active") {
+              stepSubtitle = "Convirtiendo audio en texto...";
+              timeBadge = "~ 1 min";
+            }
+          }
+
+          if (isAnalyze) {
+            if (state === "active") {
+              stepSubtitle = chunkTimeRange
+                ? `Analizando sección ${chunkTimeRange} (Bloque ${chunkCurrent} de ${chunkTotal})`
+                : `Evaluando hooks y retención... Bloque ${chunkCurrent} de ${chunkTotal}`;
+              timeBadge = `Bloque ${chunkCurrent}/${chunkTotal}`;
+            } else if (state === "done") {
+              stepSubtitle = "Temas, hooks y momentos clave evaluados";
+              timeBadge = "Listo";
+            }
+          }
+
+          if (isClips) {
+            if (state === "active" || (currentStep === "analyze" && clipsFoundSoFar > 0)) {
+              stepSubtitle = `${clipsFoundSoFar} clips detectados hasta el momento`;
+              timeBadge = `${clipsFoundSoFar} clips`;
+            } else if (state === "done") {
+              stepSubtitle = `${clipsFoundSoFar > 0 ? clipsFoundSoFar : "Mejores"} momentos virales detectados`;
+              timeBadge = `${clipsFoundSoFar} clips`;
+            }
+          }
 
           return (
-            <div key={step.key} className={`${styles.step} ${styles[state]}`}>
+            <div
+              key={step.key}
+              className={`${styles.stepRow} ${styles[state]} ${state === "active" ? styles.stepRowActive : ""}`}
+            >
+              {/* Left Column: Number/Checkmark Circle + Vertical Line */}
               <div className={styles.stepLeft}>
-                <div className={styles.stepIconWrapper}>
+                <div className={styles.circleBadge}>
                   {state === "done" ? (
-                    <span className={styles.stepCheckmark}>✓</span>
-                  ) : state === "active" ? (
-                    <span className="spinner" />
+                    <Check size={14} className={styles.checkIcon} strokeWidth={3} />
                   ) : (
-                    <span className={styles.stepNumber}>{i + 1}</span>
+                    <span className={styles.stepNum}>{step.stepNumber}</span>
                   )}
                 </div>
                 {i < PIPELINE_STEPS.length - 1 && (
                   <div
-                    className={`${styles.stepConnector} ${
+                    className={`${styles.connectorLine} ${
                       state === "done" ? styles.connectorDone : ""
                     }`}
                   />
                 )}
               </div>
 
-              <div className={styles.stepContent}>
-                <span className={styles.stepIcon}>{step.icon}</span>
-                <div className={styles.stepDetails}>
-                  <div className={styles.stepTitleRow}>
-                    <p className={styles.stepLabel}>{step.label}</p>
-                    {state === "active" && (
-                      <span className={styles.liveBadge}>EN PROGRESO</span>
-                    )}
-                  </div>
-
-                  {/* Active Step: Download Granular Progress */}
-                  {state === "active" && isDownload && (
-                    <div className={styles.subProgressBox}>
-                      <div className={styles.subProgressHeader}>
-                        <span>Descargando audio...</span>
-                        <span className={styles.subProgressValue}>
-                          {downloadPct}% {downloadSpeed && `(${downloadSpeed})`}
-                        </span>
-                      </div>
-                      <div className={styles.subTrack}>
-                        <div
-                          className={styles.subFillDownload}
-                          style={{ width: `${Math.max(downloadPct, 5)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Active Step: Transcribe Granular Progress & Waveform */}
-                  {state === "active" && isTranscribe && (
-                    <div className={styles.subProgressBox}>
-                      <div className={styles.subProgressHeader}>
-                        <span>Procesando audio localmente...</span>
-                        <span className={styles.subProgressValue}>
-                          {transcribePct}%
-                        </span>
-                      </div>
-                      <div className={styles.subTrack}>
-                        <div
-                          className={styles.subFillTranscribe}
-                          style={{ width: `${Math.max(transcribePct, 4)}%` }}
-                        />
-                      </div>
-                      <div className={styles.transcribeInfoRow}>
-                        <span className={styles.segmentCounter}>
-                          🎙️ {transcribeSegs > 0 ? `${transcribeSegs} segmentos extraídos` : "Analizando ondas de voz..."}
-                        </span>
-                        {/* Audio equalizer animation */}
-                        <div className={styles.soundWave}>
-                          <span />
-                          <span />
-                          <span />
-                          <span />
-                          <span />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Active Step: Analyze Granular Progress */}
-                  {state === "active" && isAnalyze && (
-                    <div className={styles.subProgressBox}>
-                      <div className={styles.subProgressHeader}>
-                        <span>Evaluando hooks y retención...</span>
-                        {chunkTotal !== undefined && chunkTotal > 1 && (
-                          <span className={styles.subProgressValue}>
-                            Bloque {chunkCurrent} de {chunkTotal}
-                          </span>
-                        )}
-                      </div>
-                      {chunkTotal !== undefined && chunkTotal > 1 && (
-                        <div className={styles.subTrack}>
-                          <div
-                            className={styles.subFillAnalyze}
-                            style={{
-                              width: `${Math.round(((chunkCurrent ?? 1) / chunkTotal) * 100)}%`,
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Done State metadata */}
-                  {state === "done" && isDownload && (
-                    <p className={styles.stepMeta}>
-                      {transcriptionMethodUsed === "youtube_subs"
-                        ? "✓ Omitido: No requiere descarga de audio (subtítulos directos)"
-                        : duration != null && duration > 0
-                        ? `✓ Audio 16kHz mono extraído (${formatDuration(duration)})`
-                        : "✓ Audio extraído"}
-                    </p>
-                  )}
-                  {state === "done" && isTranscribe && (
-                    <p className={styles.stepMeta}>
-                      {transcriptionMethodUsed === "youtube_subs"
-                        ? `✓ Subtítulos oficiales de YouTube (instantáneo 1s, ${segments ?? 0} segmentos)`
-                        : transcriptionMethodUsed === "groq"
-                        ? `✓ Groq Whisper Cloud Large-v3 (~15s, ${segments ?? 0} segmentos)`
-                        : transcriptionMethodUsed === "local"
-                        ? `✓ Whisper local M3 Pro (${segments ?? 0} segmentos)`
-                        : `✓ ${segments ?? 0} segmentos de texto con timestamps listos`}
-                    </p>
-                  )}
-                  {state === "done" && isAnalyze && (
-                    <p className={styles.stepMeta}>
-                      ✓ Momentos candidatos detectados y calificados
-                    </p>
-                  )}
+              {/* Middle Column: Title & Subtitle */}
+              <div className={styles.stepCenter}>
+                <div className={styles.stepTitleRow}>
+                  <p className={styles.stepLabel}>{step.label}</p>
                 </div>
+                <p className={styles.stepSub}>{stepSubtitle}</p>
+
+                {/* Granular Active Sub-bar for Download */}
+                {state === "active" && isDownload && downloadPct > 0 && (
+                  <div className={styles.subBarTrack}>
+                    <div
+                      className={styles.subBarFill}
+                      style={{ width: `${Math.max(downloadPct, 5)}%` }}
+                    />
+                  </div>
+                )}
+
+                {/* Granular Active Sub-bar for Transcribe */}
+                {state === "active" && isTranscribe && transcribePct > 0 && (
+                  <div className={styles.subBarTrack}>
+                    <div
+                      className={styles.subBarFill}
+                      style={{ width: `${Math.max(transcribePct, 5)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Time badge or Soundwave */}
+              <div className={styles.stepRight}>
+                {state === "active" && isTranscribe ? (
+                  <div className={styles.soundWaveGroup}>
+                    <div className={styles.soundWave}>
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                    <span className={styles.timeBadge}>{timeBadge}</span>
+                  </div>
+                ) : (
+                  <span
+                    className={`${styles.timeBadge} ${
+                      state === "active" ? styles.timeBadgeActive : ""
+                    }`}
+                  >
+                    {timeBadge}
+                  </span>
+                )}
               </div>
             </div>
           );

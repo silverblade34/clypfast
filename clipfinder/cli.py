@@ -74,10 +74,10 @@ def analyze(
         metavar="URL_O_PATH",
     ),
     provider: str = typer.Option(
-        "groq",
+        "gemini",
         "--provider",
         "-p",
-        help="Proveedor LLM: [bold]groq[/bold] | gemini",
+        help="Proveedor LLM: groq | [bold]gemini[/bold]",
         show_default=True,
     ),
     model: Optional[str] = typer.Option(
