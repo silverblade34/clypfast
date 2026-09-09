@@ -658,6 +658,14 @@ export default function HistoryPage() {
                             >
                               🎬 Abrir en panel →
                             </Link>
+                            <Link
+                              href={`/editor?clipId=${c.id}&returnUrl=/history`}
+                              className="btn-secondary"
+                              style={{ padding: "4px 10px", fontSize: 11, textDecoration: "none", whiteSpace: "nowrap" }}
+                              title="Abrir en el editor Mini-CapCut"
+                            >
+                              ✂️ Mini-CapCut
+                            </Link>
                             <button
                               type="button"
                               onClick={() => handleCopy(c.id, fullCopy)}

@@ -498,6 +498,7 @@ export default function AnalyzePage({
                         index={idx}
                         isActive={activeClipIdx === idx}
                         onJump={() => handleJump(clip.start_seconds, idx)}
+                        videoId={videoId ?? undefined}
                         videoUrl={videoUrl}
                       />
                     ))}

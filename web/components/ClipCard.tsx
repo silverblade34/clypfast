@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ChevronDown } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ChevronDown, Sliders } from "lucide-react";
 import styles from "./ClipCard.module.css";
 import ClipCustomizerModal from "./ClipCustomizerModal";
 
@@ -34,6 +35,21 @@ function formatTime(seconds: number): string {
     return `${h.toString().padStart(2, "0")}:${(m % 60).toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   }
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+function extractYouTubeId(url?: string | null): string | null {
+  if (!url) return null;
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /\/embed\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 function getScoreClass(score: number): string {
@@ -77,6 +93,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string 
 };
 
 export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl }: Props) {
+  const router = useRouter();
   const [startSec, setStartSec] = useState(clip.start_seconds);
   const [endSec, setEndSec]     = useState(clip.end_seconds);
   const [status, setStatus]     = useState(clip.status || "prospecto");
@@ -102,9 +119,10 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   const tags       = deriveTags(clip.hashtags);
   const statusMeta = STATUS_CONFIG[status] || STATUS_CONFIG.prospecto;
 
-  // Thumbnail YouTube: usa la imagen del video (no exactamente el timestamp, pero identifica el video)
-  const thumbSrc = videoId
-    ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
+  // Thumbnail YouTube: resuelve el videoId desde prop o videoUrl
+  const effectiveVideoId = videoId || extractYouTubeId(videoUrl);
+  const thumbSrc = effectiveVideoId
+    ? `https://img.youtube.com/vi/${effectiveVideoId}/mqdefault.jpg`
     : null;
 
   // Cerrar status menu al click fuera
@@ -186,9 +204,24 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
         {/* Thumbnail */}
         {thumbSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={thumbSrc} alt="" className={styles.thumb} loading="lazy" />
+          <img
+            src={thumbSrc}
+            alt={clip.title}
+            className={styles.thumb}
+            loading="lazy"
+            onClick={() => onJump(startSec)}
+            style={{ cursor: "pointer" }}
+            title="Reproducir este momento"
+          />
         ) : (
-          <div className={styles.thumbPlaceholder}>▶</div>
+          <div
+            className={styles.thumbPlaceholder}
+            onClick={() => onJump(startSec)}
+            style={{ cursor: "pointer" }}
+            title="Reproducir este momento"
+          >
+            ▶
+          </div>
         )}
 
         {/* Contenido */}
@@ -344,14 +377,43 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
           {isActive ? "Reproduciendo" : "Ver clip"}
         </button>
 
-        {/* Editar (abre time editor + copy) */}
+        {/* Editar → Navega a la página del Mini-CapCut Studio */}
         <button
           className={styles.editBtn}
           onClick={() => {
-            setIsEditingTime(!isEditingTime);
-            setShowCopyBox(!showCopyBox);
+            const payload = {
+              clip: {
+                id: clip.id,
+                title: clip.title,
+                start_seconds: startSec,
+                end_seconds: endSec,
+                reason: clip.reason,
+                score: clip.score,
+                status: status,
+                caption: clip.caption,
+                hashtags: clip.hashtags,
+              },
+              index,
+              videoId: effectiveVideoId,
+              videoUrl: videoUrl || (effectiveVideoId ? `https://www.youtube.com/watch?v=${effectiveVideoId}` : ""),
+              returnUrl: typeof window !== "undefined" ? window.location.pathname : "/history",
+            };
+            try {
+              sessionStorage.setItem("clypfast_edit_clip", JSON.stringify(payload));
+            } catch { /* ignore */ }
+
+            const sp = new URLSearchParams();
+            if (clip.id) sp.set("clipId", String(clip.id));
+            if (effectiveVideoId) sp.set("videoId", effectiveVideoId);
+            sp.set("start", String(startSec));
+            sp.set("end", String(endSec));
+            sp.set("index", String(index));
+            sp.set("title", clip.title);
+            if (typeof window !== "undefined") sp.set("returnUrl", window.location.pathname);
+            router.push(`/editor?${sp.toString()}`);
           }}
-          title="Editar tiempos y copy"
+          title="Abrir en el editor Mini-CapCut"
+          id={`edit-btn-${index}`}
         >
           <Pencil size={12} />
           Editar

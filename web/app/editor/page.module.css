@@ -1,0 +1,666 @@
+/* ── ClypFast Studio / Editor Page ─────────────────────────────────────── */
+
+.editorWrapper {
+  min-height: 100vh;
+  background: #07090e;
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Background gradient glows */
+.bgOrb1 {
+  position: fixed;
+  top: -150px;
+  left: 20%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.12) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bgOrb2 {
+  position: fixed;
+  bottom: -100px;
+  right: 15%;
+  width: 550px;
+  height: 550px;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Top Header */
+.topNav {
+  height: 64px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 13, 20, 0.85);
+  backdrop-filter: blur(16px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+}
+
+.topNavInner {
+  width: 100%;
+  display: flex;
+  justifyContent: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.navLeft {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.backBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.titleArea {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clipBadge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(167, 139, 250, 0.2);
+  color: #a78bfa;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+}
+
+.clipTitleInput {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  outline: none;
+  width: 320px;
+  max-width: 40vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.2s;
+}
+
+.clipTitleInput:focus {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(167, 139, 250, 0.4);
+}
+
+.navRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.durationBadge {
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.durationVal {
+  color: var(--cyan, #22d3ee);
+  font-weight: 700;
+}
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 20px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.35);
+  transition: all 0.2s ease;
+}
+
+.exportBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.5);
+}
+
+.exportBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Main Studio Layout */
+.studioContainer {
+  flex: 1;
+  display: flex;
+  height: calc(100vh - 64px);
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+}
+
+@media (max-width: 960px) {
+  .studioContainer {
+    flex-direction: column;
+    height: auto;
+    overflow-y: auto;
+  }
+}
+
+/* Left: Viewport / Canvas / Player */
+.canvasCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justifyContent: center;
+  padding: 24px;
+  background: radial-gradient(circle at center, rgba(18, 24, 38, 0.6) 0%, rgba(7, 9, 14, 0.95) 100%);
+  position: relative;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* Smartphone Mockup (9:16 Aspect Ratio) */
+.phoneFrame {
+  width: 280px;
+  height: 498px;
+  aspect-ratio: 9 / 16;
+  background: #000;
+  border-radius: 28px;
+  border: 4px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 40px rgba(124, 58, 237, 0.15);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+@media (min-height: 800px) {
+  .phoneFrame {
+    width: 320px;
+    height: 569px;
+  }
+}
+
+/* Video embed inside frame */
+.phoneVideoLayer {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justifyContent: center;
+  background: #000;
+}
+
+.phonePlayer {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Blurred background for vertical_blur mode */
+.phoneBlurredBg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(24px) brightness(0.6);
+  transform: scale(1.2);
+}
+
+.phoneOriginalBox {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #111;
+  position: relative;
+  z-index: 2;
+}
+
+/* Hook Banner Overlay in 9:16 HUD */
+.hudHookBanner {
+  position: absolute;
+  top: 14%;
+  left: 5%;
+  right: 5%;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 8px 12px;
+  text-align: center;
+  z-index: 10;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.hudHookTag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #fbbf24;
+  margin-bottom: 2px;
+}
+
+.hudHookText {
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.25;
+  margin: 0;
+}
+
+/* Animated Subtitles Overlay in 9:16 HUD */
+.hudSubtitles {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  text-align: center;
+  z-index: 10;
+  pointer-events: none;
+  transition: bottom 0.2s ease;
+}
+
+.hudSubWord {
+  display: inline-block;
+  font-size: 15px;
+  font-weight: 900;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  margin: 1px;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7);
+}
+
+/* Safe zones overlay */
+.safeZonesOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 15;
+}
+
+.safeZoneTop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 12%;
+  border-bottom: 1px dashed rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.05);
+  display: flex;
+  align-items: flex-end;
+  padding: 4px;
+}
+
+.safeZoneBottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22%;
+  border-top: 1px dashed rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.05);
+  display: flex;
+  align-items: flex-start;
+  padding: 4px;
+}
+
+.safeZoneRight {
+  position: absolute;
+  right: 0;
+  top: 12%;
+  bottom: 22%;
+  width: 18%;
+  border-left: 1px dashed rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.05);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.safeZoneText {
+  font-size: 8px;
+  color: #f87171;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Bottom Timeline Bar */
+.timelineBar {
+  margin-top: 20px;
+  width: 100%;
+  max-width: 520px;
+  background: rgba(15, 20, 30, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(12px);
+}
+
+.timelineControls {
+  display: flex;
+  justifyContent: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stepperGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stepperLabel {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.stepperVal {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 4px 8px;
+  border-radius: 6px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.stepBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justifyContent: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.stepBtn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+/* Right: Tools & Panels */
+.toolsCol {
+  width: 440px;
+  max-width: 45vw;
+  background: rgba(11, 15, 24, 0.95);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 960px) {
+  .toolsCol {
+    width: 100%;
+    max-width: 100%;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* Tool Tabs */
+.toolTabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 11, 18, 0.8);
+  overflow-x: auto;
+}
+
+.toolTab {
+  flex: 1;
+  padding: 13px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justifyContent: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.toolTab:hover {
+  color: #cbd5e1;
+}
+
+.toolTabActive {
+  color: var(--cyan, #22d3ee);
+  border-bottom-color: var(--cyan, #22d3ee);
+  background: rgba(34, 211, 238, 0.04);
+}
+
+/* Panel Content */
+.panelContent {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sectionHeader {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Crop Mode Grid */
+.cropGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cropOption {
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cropOption:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.cropOptionActive {
+  background: rgba(124, 58, 237, 0.15);
+  border-color: #8b5cf6;
+  color: #fff;
+}
+
+.cropTitle {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.cropDesc {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+/* Theme / Preset Cards */
+.themeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.themeOption {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.themeOptionActive {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: var(--cyan, #22d3ee);
+  color: #fff;
+}
+
+/* Color Swatches */
+.colorList {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.colorSwatch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.colorSwatchActive {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+/* Hook Text input */
+.hookInput {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  resize: vertical;
+}
+
+.hookInput:focus {
+  border-color: #8b5cf6;
+}
+
+/* Sliders */
+.rangeSlider {
+  width: 100%;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+}
+
+/* Export Status Banner */
+.statusBanner {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progressBar {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #06b6d4);
+  transition: width 0.3s ease;
+}

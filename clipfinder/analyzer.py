@@ -99,7 +99,11 @@ con mayor potencial viral para TikTok/Reels/Shorts.
 
 EVITAR: transiciones vagas, introducciones genéricas, despedidas, silencio o relleno sin sustancia.
 
-DURACIÓN IDEAL por clip: entre 30 y 90 segundos.
+REGLA CRÍTICA DE DURACIÓN (OBLIGATORIA):
+- DURACIÓN MÍNIMA: 20 segundos. DURACIÓN MÁXIMA: 90 segundos (Ideal: 30 a 60 segundos).
+- ESTÁ ESTRICTAMENTE PROHIBIDO generar clips de menos de 15 segundos (como 1s, 2s, 5s o 10s).
+- NUNCA selecciones una sola línea o frase aislada de subtítulo. Cada clip DEBE contener una idea, historia, debate o explicación COMPLETA con gancho (hook), desarrollo y remate.
+- Asegúrate de que (end_seconds - start_seconds) >= 20.
 
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
 {{"clips": [{{"start_seconds": 0.0, "end_seconds": 0.0, "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Copy sugerido para TikTok/Reels con gancho y llamada a la acción", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
@@ -365,7 +369,46 @@ def _deduplicate(clips: list[ClipCandidate], overlap_threshold: float = 0.5) -> 
         if not dominated:
             kept.append(candidate)
 
-    return kept
+MIN_CLIP_DURATION: float = 15.0
+MAX_CLIP_DURATION: float = 120.0
+
+
+def _validate_and_sanitize_clips(
+    clips: list[ClipCandidate],
+    segments: list[TranscriptSegment] | None = None,
+) -> list[ClipCandidate]:
+    """
+    Ensure every clip has a valid duration >= MIN_CLIP_DURATION (15s).
+    If a clip is between 5s and 14s, try expanding it to 30s-40s using transcript segments.
+    If it's under 5s and cannot be expanded to at least 15s, discard it.
+    """
+    sanitized: list[ClipCandidate] = []
+    max_video_time = segments[-1].end if segments else float("inf")
+
+    for c in clips:
+        # Check inverted timestamps
+        if c.start_seconds > c.end_seconds:
+            c.start_seconds, c.end_seconds = c.end_seconds, c.start_seconds
+
+        dur = c.end_seconds - c.start_seconds
+
+        # If LLM generated a micro-clip (< 15s), try to expand to full context
+        if dur < MIN_CLIP_DURATION:
+            if segments and c.start_seconds < max_video_time:
+                target_end = min(max_video_time, c.start_seconds + 35.0)
+                for seg in segments:
+                    if seg.end >= target_end:
+                        target_end = seg.end
+                        break
+                if target_end - c.start_seconds >= MIN_CLIP_DURATION:
+                    c.end_seconds = round(target_end, 1)
+                    dur = c.end_seconds - c.start_seconds
+
+        # Only accept clips meeting the minimum duration
+        if dur >= MIN_CLIP_DURATION and dur <= MAX_CLIP_DURATION:
+            sanitized.append(c)
+
+    return sanitized
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -455,7 +498,8 @@ def analyze_segments(
             except TypeError:
                 progress_callback(i, total, error_msg)
 
-    # Deduplicate, sort, and limit
+    # Sanitize durations, deduplicate, sort, and limit
+    all_clips = _validate_and_sanitize_clips(all_clips, segments)
     all_clips = _deduplicate(all_clips)
     all_clips.sort(key=lambda c: c.score, reverse=True)
 
