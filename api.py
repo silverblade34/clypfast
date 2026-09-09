@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from dotenv import load_dotenv
@@ -879,5 +879,133 @@ async def filter_clips(status: str | None = None, cliente: str | None = None) ->
                 c_dict["llm_model"] = c.video.llm_model
             results.append(c_dict)
         return results
+
+
+@app.get("/clips/{clip_id}/thumbnail")
+async def get_clip_thumbnail(clip_id: int):
+    """Return an exact video frame thumbnail at start_seconds for this clip."""
+    import subprocess
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Clip
+    from clipfinder.downloader import _extract_video_id
+
+    start_sec = 0.0
+    source_url = None
+    source_path = None
+    yt_id = None
+
+    with Session(engine) as session:
+        clip = session.get(Clip, clip_id)
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip no encontrado")
+        start_sec = clip.start_seconds
+        if clip.video:
+            source_url = clip.video.source_url
+            source_path = clip.video.source_path
+
+    if source_url:
+        yt_id = _extract_video_id(source_url)
+
+    thumbs_dir = Path("outputs/thumbs")
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    thumb_path = thumbs_dir / f"clip_{clip_id}_{int(start_sec)}.jpg"
+
+    if thumb_path.exists() and thumb_path.stat().st_size > 500:
+        return FileResponse(str(thumb_path), media_type="image/jpeg")
+
+    # Try extracting exact frame
+    try:
+        if source_path and Path(source_path).exists():
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(start_sec), "-i", str(source_path),
+                "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                return FileResponse(str(thumb_path), media_type="image/jpeg")
+        elif source_url:
+            import yt_dlp
+            ydl_opts = {"quiet": True, "format": "bestvideo[height<=360]/worst"}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(source_url, download=False)
+                stream_url = info.get("url") or (info.get("formats") and info["formats"][0].get("url"))
+            if stream_url:
+                cmd = [
+                    "ffmpeg", "-y", "-ss", str(start_sec), "-i", stream_url,
+                    "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
+                ]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                    return FileResponse(str(thumb_path), media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning(f"Error generating thumbnail for clip {clip_id}: {exc}")
+
+    # Fallback to YouTube default thumbnail
+    if yt_id:
+        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg")
+    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+
+
+@app.get("/videos/{video_id}/thumbnail")
+async def get_video_frame_thumbnail(video_id: int, time: float = 0.0):
+    """Return an exact video frame thumbnail at specified time (in seconds)."""
+    import subprocess
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+    from clipfinder.downloader import _extract_video_id
+
+    source_url = None
+    source_path = None
+    yt_id = None
+
+    with Session(engine) as session:
+        video = session.get(Video, video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video no encontrado")
+        source_url = video.source_url
+        source_path = video.source_path
+
+    if source_url:
+        yt_id = _extract_video_id(source_url)
+
+    thumbs_dir = Path("outputs/thumbs")
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    thumb_path = thumbs_dir / f"vid_{video_id}_{int(time)}.jpg"
+
+    if thumb_path.exists() and thumb_path.stat().st_size > 500:
+        return FileResponse(str(thumb_path), media_type="image/jpeg")
+
+    try:
+        if source_path and Path(source_path).exists():
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(time), "-i", str(source_path),
+                "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                return FileResponse(str(thumb_path), media_type="image/jpeg")
+        elif source_url:
+            import yt_dlp
+            ydl_opts = {"quiet": True, "format": "bestvideo[height<=360]/worst"}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(source_url, download=False)
+                stream_url = info.get("url") or (info.get("formats") and info["formats"][0].get("url"))
+            if stream_url:
+                cmd = [
+                    "ffmpeg", "-y", "-ss", str(time), "-i", stream_url,
+                    "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
+                ]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                    return FileResponse(str(thumb_path), media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning(f"Error generating thumbnail for video {video_id} at {time}s: {exc}")
+
+    if yt_id:
+        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg")
+    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+
 
 

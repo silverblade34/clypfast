@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ChevronDown, Sliders } from "lucide-react";
+import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ExternalLink, Sliders, X } from "lucide-react";
 import styles from "./ClipCard.module.css";
 import ClipCustomizerModal from "./ClipCustomizerModal";
 
@@ -37,6 +37,21 @@ function formatTime(seconds: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
+function parseTimeToSeconds(timeStr: string): number | null {
+  const parts = timeStr.trim().split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  return null;
+}
+
 function extractYouTubeId(url?: string | null): string | null {
   if (!url) return null;
   const patterns = [
@@ -52,108 +67,122 @@ function extractYouTubeId(url?: string | null): string | null {
   return null;
 }
 
-function getScoreClass(score: number): string {
-  if (score >= 8) return "high";
-  if (score >= 6) return "mid";
-  return "low";
-}
-
-function getScoreIcon(score: number): string {
-  if (score >= 9) return "🔥";
-  if (score >= 7) return "⚡";
-  return "✨";
-}
-
 /**
- * Deriva tags de contexto a partir de los hashtags del clip.
- * Soporta tanto string ("#tag1 #tag2") como Array (["#tag1", "#tag2"]) provenientes de la IA.
- * Toma los primeros 3 hashtags, limpia el # y capitaliza.
+ * Deriva tags temáticos inteligentes acordes al mockup
  */
-function deriveTags(hashtags?: string | string[]): string[] {
-  if (!hashtags) return [];
-  const list: string[] = Array.isArray(hashtags)
-    ? hashtags
-    : typeof hashtags === "string"
-      ? hashtags.split(/[\s,]+/)
-      : [];
+function deriveTags(hashtags?: string | string[], title?: string, reason?: string): string[] {
+  let list: string[] = [];
+  if (hashtags) {
+    list = Array.isArray(hashtags)
+      ? hashtags
+      : typeof hashtags === "string"
+        ? hashtags.split(/[\s,]+/)
+        : [];
+  }
+  const clean = list
+    .filter((t) => typeof t === "string" && t.trim().length > 0)
+    .map((t) => t.replace(/^#/, "").replace(/([A-Z])/g, " $1").trim())
+    .filter(Boolean);
 
-  return list
-    .filter((t) => typeof t === "string" && t.trim().startsWith("#"))
-    .slice(0, 3)
-    .map((t) => t.replace(/^#/, "").replace(/([A-Z])/g, " $1").trim());
+  if (clean.length > 0) {
+    return clean.slice(0, 3);
+  }
+
+  // Tags contextuales automáticos
+  const text = `${title || ""} ${reason || ""}`.toLowerCase();
+  const tags: string[] = [];
+  if (text.includes("ia") || text.includes("inteligencia") || text.includes("código") || text.includes("dev") || text.includes("software") || text.includes("tech")) {
+    tags.push("Tecnología");
+  }
+  if (text.includes("negocio") || text.includes("empresa") || text.includes("startup") || text.includes("dinero") || text.includes("ventas")) {
+    tags.push("Negocios");
+  }
+  if (text.includes("debate") || text.includes("polémica") || text.includes("injusticia") || text.includes("critica") || text.includes("muerte") || text.includes("supera")) {
+    tags.push("Controversial");
+  }
+  if (text.includes("aprender") || text.includes("tutorial") || text.includes("consejo") || text.includes("explicación") || text.includes("cómo")) {
+    tags.push("Educativo");
+  }
+  if (text.includes("viral") || text.includes("tendencia") || text.includes("secreto") || text.includes("increíble")) {
+    tags.push("Tendencia");
+  }
+  if (tags.length === 0) tags.push("Destacado", "Viral");
+  return tags.slice(0, 3);
 }
-
-const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  prospecto:        { label: "Prospecto",   color: "#64748b", dot: "#475569" },
-  enfoque_generado: { label: "9:16 Listo",  color: "#38bdf8", dot: "#38bdf8" },
-  subtitulado:      { label: "Subtitulado", color: "#a78bfa", dot: "#a78bfa" },
-  en_revision:      { label: "En Revisión", color: "#f59e0b", dot: "#f59e0b" },
-  publicado:        { label: "Publicado",   color: "#22c55e", dot: "#22c55e" },
-  descartado:       { label: "Descartado",  color: "#475569", dot: "#334155" },
-};
 
 export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl }: Props) {
   const router = useRouter();
   const [startSec, setStartSec] = useState(clip.start_seconds);
-  const [endSec, setEndSec]     = useState(clip.end_seconds);
-  const [status, setStatus]     = useState(clip.status || "prospecto");
+  const [endSec, setEndSec] = useState(clip.end_seconds);
+  const [status, setStatus] = useState(clip.status || "prospecto");
 
+  // Time editing state (supports MM:SS format)
   const [isEditingTime, setIsEditingTime] = useState(false);
-  const [isSavingTime,  setIsSavingTime]  = useState(false);
-  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [startTimeInput, setStartTimeInput] = useState(formatTime(clip.start_seconds));
+  const [endTimeInput, setEndTimeInput] = useState(formatTime(clip.end_seconds));
+  const [isSavingTime, setIsSavingTime] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showCopyBox, setShowCopyBox] = useState(false);
 
-  // Modal personalización (Fase 2)
+  // Modal personalización
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [customizerMode, setCustomizerMode] = useState<"smart_vertical" | "vertical_blur" | "original" | "split_screen">("smart_vertical");
 
   // Feedback
-  const [copiedCopy, setCopiedCopy]     = useState(false);
+  const [copiedCopy, setCopiedCopy] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
 
-  const statusRef  = useRef<HTMLDivElement>(null);
-  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const duration = Math.round(endSec - startSec);
+  const tags = deriveTags(clip.hashtags, clip.title, clip.reason);
 
-  const duration   = Math.round(endSec - startSec);
-  const scoreClass = getScoreClass(clip.score);
-  const tags       = deriveTags(clip.hashtags);
-  const statusMeta = STATUS_CONFIG[status] || STATUS_CONFIG.prospecto;
-
-  // Thumbnail YouTube: resuelve el videoId desde prop o videoUrl
   const effectiveVideoId = videoId || extractYouTubeId(videoUrl);
-  const thumbSrc = effectiveVideoId
-    ? `https://img.youtube.com/vi/${effectiveVideoId}/mqdefault.jpg`
-    : null;
 
-  // Cerrar status menu al click fuera
+  // Use exact clip frame thumbnail from backend with fallback to YouTube snapshot
+  const primaryThumb = clip.id
+    ? `/api/clips/${clip.id}/thumbnail`
+    : effectiveVideoId
+      ? `https://img.youtube.com/vi/${effectiveVideoId}/1.jpg`
+      : null;
+
+  const [thumbSrc, setThumbSrc] = useState<string | null>(primaryThumb);
+
+  // Sync inputs when startSec/endSec change
   useEffect(() => {
-    if (!showStatusMenu) return;
+    setStartTimeInput(formatTime(startSec));
+    setEndTimeInput(formatTime(endSec));
+  }, [startSec, endSec]);
+
+  // Extract clean hook quote from caption
+  const rawCaption = clip.caption ? clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim() : "";
+  const quoteText = rawCaption || (clip.title ? `“${clip.title}”` : "");
+
+  // Close more menu on outside click
+  useEffect(() => {
+    if (!showMoreMenu) return;
     const handler = (e: MouseEvent) => {
-      if (statusRef.current && !statusRef.current.contains(e.target as Node)) {
-        setShowStatusMenu(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showStatusMenu]);
+  }, [showMoreMenu]);
 
-  useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  const handleStartTimeChange = (val: string) => {
+    setStartTimeInput(val);
+    const parsed = parseTimeToSeconds(val);
+    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+      setStartSec(parsed);
+    }
+  };
 
-  // ── Handlers ─────────────────────────────────────────────────
-
-  const handleStatusChange = async (newStatus: string) => {
-    setStatus(newStatus);
-    setShowStatusMenu(false);
-    if (!clip.id) return;
-    try {
-      await fetch(`/api/clips/${clip.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-    } catch { /* ignore */ }
+  const handleEndTimeChange = (val: string) => {
+    setEndTimeInput(val);
+    const parsed = parseTimeToSeconds(val);
+    if (parsed !== null && parsed > startSec) {
+      setEndSec(parsed);
+    }
   };
 
   const handleSaveTimes = async () => {
@@ -166,316 +195,448 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ start_seconds: startSec, end_seconds: endSec }),
         });
-      } catch { /* ignore */ }
+      } catch {}
     }
     setIsSavingTime(false);
     setIsEditingTime(false);
   };
 
   const handleCopyText = () => {
-    const hashtagsStr = Array.isArray(clip.hashtags)
-      ? clip.hashtags.join(" ")
-      : (clip.hashtags || "");
-    const text = `${clip.caption || clip.title}\n\n${hashtagsStr}`.trim();
-    navigator.clipboard.writeText(text);
+    const fullText = `${clip.caption || clip.title}\n\n${
+      Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags || ""
+    }`.trim();
+    navigator.clipboard.writeText(fullText);
     setCopiedCopy(true);
     setTimeout(() => setCopiedCopy(false), 2500);
   };
 
-  /* ─── Render ─────────────────────────────────────────────── */
+  const handleCopyLink = () => {
+    if (!effectiveVideoId) return;
+    const url = `https://youtu.be/${effectiveVideoId}?t=${Math.floor(startSec)}`;
+    navigator.clipboard.writeText(url);
+    setShowMoreMenu(false);
+  };
+
   return (
     <>
-    <div
-      className={`${styles.card} ${isActive ? styles.cardActive : ""}`}
-      id={`clip-card-${index}`}
-    >
-      {/* Score badge — esquina superior derecha */}
-      <div className={`${styles.scoreBadge} ${styles[scoreClass]}`}>
-        <span>{getScoreIcon(clip.score)}</span>
-        <span>{clip.score}/10</span>
-      </div>
+      <div
+        className={`${styles.card} ${isActive ? styles.cardActive : ""}`}
+        id={`clip-card-${index}`}
+      >
+        <div className={styles.mainRow}>
+          {/* Circular Index Badge */}
+          <div className={styles.indexBadge}>{index + 1}</div>
 
-      {/* MAIN ROW: index · thumbnail · content */}
-      <div className={styles.mainRow}>
-
-        {/* Número */}
-        <div className={styles.indexBadge}>{index + 1}</div>
-
-        {/* Thumbnail */}
-        {thumbSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={thumbSrc}
-            alt={clip.title}
-            className={styles.thumb}
-            loading="lazy"
-            onClick={() => onJump(startSec)}
-            style={{ cursor: "pointer" }}
-            title="Reproducir este momento"
-          />
-        ) : (
+          {/* Video Thumbnail with exact moment frame & timestamp pill */}
           <div
-            className={styles.thumbPlaceholder}
+            className={styles.thumbWrapper}
             onClick={() => onJump(startSec)}
-            style={{ cursor: "pointer" }}
             title="Reproducir este momento"
           >
-            ▶
-          </div>
-        )}
-
-        {/* Contenido */}
-        <div className={styles.content}>
-          {/* Status pill clickeable */}
-          <div ref={statusRef} style={{ position: "relative", display: "inline-block" }}>
-            <button
-              className={styles.statusPill}
-              style={{
-                color: statusMeta.color,
-                background: `${statusMeta.color}18`,
-                borderColor: `${statusMeta.color}30`,
-              }}
-              onClick={() => setShowStatusMenu(!showStatusMenu)}
-              title="Cambiar estado"
-            >
-              <span
-                className={styles.statusDot}
-                style={{ background: statusMeta.dot }}
+            {thumbSrc ? (
+              <img
+                src={thumbSrc}
+                alt={clip.title}
+                className={styles.thumb}
+                loading="lazy"
+                onError={() => {
+                  // Fallback to YouTube snapshot
+                  if (effectiveVideoId && thumbSrc !== `https://img.youtube.com/vi/${effectiveVideoId}/1.jpg`) {
+                    setThumbSrc(`https://img.youtube.com/vi/${effectiveVideoId}/1.jpg`);
+                  } else if (effectiveVideoId) {
+                    setThumbSrc(`https://img.youtube.com/vi/${effectiveVideoId}/mqdefault.jpg`);
+                  }
+                }}
               />
-              {statusMeta.label}
-              <ChevronDown size={9} style={{ marginLeft: 2 }} />
-            </button>
+            ) : (
+              <div className={styles.thumbPlaceholder}>▶</div>
+            )}
+            <div className={styles.thumbPlayOverlay}>
+              <Play size={20} fill="currentColor" />
+            </div>
+            {/* Timestamp Badge overlaid on thumbnail */}
+            <div className={styles.thumbTimeBadge}>
+              {formatTime(startSec)} – {formatTime(endSec)}
+            </div>
+          </div>
 
-            {showStatusMenu && (
-              <div className={styles.statusDropdown}>
-                {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
-                  <button
-                    key={key}
-                    className={styles.statusOption}
-                    onClick={() => handleStatusChange(key)}
-                  >
-                    <span className={styles.statusDot} style={{ background: cfg.dot }} />
-                    {cfg.label}
-                  </button>
+          {/* Right Content Block */}
+          <div className={styles.content}>
+            {/* Top Row: Title + Score Pill */}
+            <div className={styles.headerRow}>
+              <h3 className={styles.title}>{clip.title}</h3>
+              <div
+                className={`${styles.scorePill} ${clip.score >= 9 ? styles.scorePillGold : ""}`}
+                title={`Score de viralidad estimado: ${clip.score}/10`}
+              >
+                <span>🔥</span>
+                <span>{clip.score}/10</span>
+              </div>
+            </div>
+
+            {/* Category Tags Row */}
+            {tags.length > 0 && (
+              <div className={styles.tagsRow}>
+                {tags.map((tag) => (
+                  <span key={tag} className={styles.tag}>
+                    {tag}
+                  </span>
                 ))}
               </div>
             )}
-          </div>
 
-          {/* Título */}
-          <h3 className={styles.title}>{clip.title}</h3>
+            {/* Hook Quote Line */}
+            {quoteText && (
+              <p className={styles.quoteBox}>
+                <span className={styles.quoteHighlight}>“</span>
+                {quoteText.replace(/^“|”$/g, "").trim()}
+                <span className={styles.quoteHighlight}>”</span>
+              </p>
+            )}
 
-          {/* Tiempo */}
-          <div className={styles.timeRow}>
-            <span className={styles.timestamp}>
-              {formatTime(startSec)} → {formatTime(endSec)}
-            </span>
-            <span className={styles.duration}>{duration}s</span>
-            <button
-              className={styles.adjustBtn}
-              onClick={() => setIsEditingTime(!isEditingTime)}
-              title="Ajustar inicio y fin"
-            >
-              <Pencil size={9} />
-              Ajustar
-            </button>
-          </div>
-        </div>
-      </div>
+            {/* Reason / Explanation */}
+            {clip.reason && (
+              <p className={styles.reasonText}>
+                {clip.reason}
+              </p>
+            )}
 
-      {/* TAGS ROW */}
-      {tags.length > 0 && (
-        <div className={styles.tagsRow}>
-          {tags.map((tag) => (
-            <span key={tag} className={styles.tag}>{tag}</span>
-          ))}
-        </div>
-      )}
+            {/* Action Buttons Row */}
+            <div className={styles.actionsRow}>
+              {/* 1. Ver clip (Filled Blue) */}
+              <button
+                type="button"
+                className={`${styles.jumpBtn} ${isActive ? styles.jumpBtnActive : ""}`}
+                onClick={() => onJump(startSec)}
+                id={`jump-btn-${index}`}
+              >
+                <Play size={12} fill="currentColor" />
+                <span>{isActive ? "Reproduciendo" : "Ver clip"}</span>
+              </button>
 
-      {/* DESCRIPTION */}
-      <p className={styles.reason}>{clip.reason}</p>
+              {/* 2. Editar (Mini-CapCut Studio) */}
+              <button
+                type="button"
+                className={styles.actionBtn}
+                onClick={() => {
+                  const payload = {
+                    clip: {
+                      id: clip.id,
+                      title: clip.title,
+                      start_seconds: startSec,
+                      end_seconds: endSec,
+                      reason: clip.reason,
+                      score: clip.score,
+                      status: status,
+                      caption: clip.caption,
+                      hashtags: clip.hashtags,
+                    },
+                    index,
+                    videoId: effectiveVideoId,
+                    videoUrl: videoUrl || (effectiveVideoId ? `https://www.youtube.com/watch?v=${effectiveVideoId}` : ""),
+                    returnUrl: typeof window !== "undefined" ? window.location.pathname : "/history",
+                  };
+                  try {
+                    sessionStorage.setItem("clypfast_edit_clip", JSON.stringify(payload));
+                  } catch {}
 
-      {/* INLINE TIME EDITOR */}
-      {isEditingTime && (
-        <div className={styles.timeEditorCard}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <div>
-              <label style={{ fontSize: 10, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>
-                Inicio (seg)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                value={startSec}
-                onChange={(e) => setStartSec(parseFloat(e.target.value) || 0)}
-                className="input-field"
-                style={{ width: 86, padding: "4px 8px", fontSize: 12 }}
-              />
+                  const sp = new URLSearchParams();
+                  if (clip.id) sp.set("clipId", String(clip.id));
+                  if (effectiveVideoId) sp.set("videoId", effectiveVideoId);
+                  sp.set("start", String(startSec));
+                  sp.set("end", String(endSec));
+                  sp.set("index", String(index));
+                  sp.set("title", clip.title);
+                  if (typeof window !== "undefined") sp.set("returnUrl", window.location.pathname);
+                  router.push(`/editor?${sp.toString()}`);
+                }}
+                title="Abrir en el editor Mini-CapCut"
+                id={`edit-btn-${index}`}
+              >
+                <Pencil size={12} />
+                <span>Editar</span>
+              </button>
+
+              {/* 3. Descargar (Personalizar 9:16) */}
+              <button
+                type="button"
+                className={styles.actionBtn}
+                onClick={() => {
+                  setCustomizerMode("smart_vertical");
+                  setShowCustomizer(true);
+                }}
+                id={`download-btn-${index}`}
+                title="Exportar y descargar clip vertical"
+              >
+                <Download size={12} />
+                <span>Descargar</span>
+              </button>
+
+              {/* 4. More Button */}
+              <div style={{ position: "relative" }} ref={menuRef}>
+                <button
+                  type="button"
+                  className={styles.moreBtn}
+                  onClick={() => setShowMoreMenu(!showMoreMenu)}
+                  title="Más opciones"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+
+                {showMoreMenu && (
+                  <div className={styles.dropdownMenu}>
+                    <button
+                      type="button"
+                      className={styles.dropdownItem}
+                      onClick={() => {
+                        handleCopyText();
+                        setShowMoreMenu(false);
+                      }}
+                    >
+                      <Copy size={12} />
+                      <span>Copiar copy y hashtags</span>
+                    </button>
+                    {effectiveVideoId && (
+                      <button
+                        type="button"
+                        className={styles.dropdownItem}
+                        onClick={handleCopyLink}
+                      >
+                        <ExternalLink size={12} />
+                        <span>Copiar link con timestamp</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.dropdownItem}
+                      onClick={() => {
+                        setIsEditingTime(!isEditingTime);
+                        setShowMoreMenu(false);
+                      }}
+                    >
+                      <Sliders size={12} />
+                      <span>Ajustar rango ({formatTime(startSec)} – {formatTime(endSec)})</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-            <div>
-              <label style={{ fontSize: 10, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>
-                Fin (seg)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                value={endSec}
-                onChange={(e) => setEndSec(parseFloat(e.target.value) || 0)}
-                className="input-field"
-                style={{ width: 86, padding: "4px 8px", fontSize: 12 }}
-              />
-            </div>
-            <button
-              className="btn-primary"
-              style={{ padding: "6px 12px", fontSize: 11, marginTop: 14 }}
-              onClick={handleSaveTimes}
-              disabled={isSavingTime}
-            >
-              {isSavingTime ? "Guardando..." : "✓ Guardar"}
-            </button>
           </div>
         </div>
-      )}
 
-      {/* CAPTION COPY (colapsable) */}
-      {(clip.caption || clip.hashtags) && showCopyBox && (
-        <div className={styles.socialCopyBox}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {clip.caption && <p className={styles.captionText}>"{clip.caption}"</p>}
-              {clip.hashtags && (
-                <p className={styles.hashtagsText}>
-                  {Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags}
-                </p>
-              )}
+        {/* Inline Time Editor con formato MM:SS y ajuste por segundos */}
+        {isEditingTime && (
+          <div className={styles.timeEditorCard}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Sliders size={13} color="#38bdf8" />
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#ffffff" }}>
+                  Ajustar Minutos y Segundos del Clip
+                </span>
+              </div>
+              <span
+                style={{
+                  fontSize: "11.5px",
+                  fontWeight: 600,
+                  color: "#38bdf8",
+                  background: "rgba(56, 189, 248, 0.12)",
+                  padding: "2px 8px",
+                  borderRadius: "99px",
+                  border: "1px solid rgba(56, 189, 248, 0.25)",
+                }}
+              >
+                ⏱ {formatTime(startSec)} – {formatTime(endSec)} ({duration}s)
+              </span>
             </div>
-            <button className={styles.copyBtn} onClick={handleCopyText}>
-              {copiedCopy ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Copiar</>}
-            </button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {/* Inicio Block */}
+              <div style={{ background: "rgba(255, 255, 255, 0.03)", padding: "8px 10px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.06)" }}>
+                <label style={{ fontSize: "11px", color: "rgba(255, 255, 255, 0.6)", display: "block", marginBottom: 6, fontWeight: 500 }}>
+                  Inicio (Minutos : Segundos)
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => setStartSec(Math.max(0, startSec - 5))}
+                    className={styles.stepperBtn}
+                    title="-5 segundos"
+                  >
+                    -5s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStartSec(Math.max(0, startSec - 1))}
+                    className={styles.stepperBtn}
+                    title="-1 segundo"
+                  >
+                    -1s
+                  </button>
+                  <input
+                    type="text"
+                    value={startTimeInput}
+                    onChange={(e) => handleStartTimeChange(e.target.value)}
+                    placeholder="MM:SS"
+                    className="input-field"
+                    style={{
+                      width: "66px",
+                      textAlign: "center",
+                      padding: "4px 6px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      color: "#38bdf8",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setStartSec(Math.min(endSec - 2, startSec + 1))}
+                    className={styles.stepperBtn}
+                    title="+1 segundo"
+                  >
+                    +1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStartSec(Math.min(endSec - 2, startSec + 5))}
+                    className={styles.stepperBtn}
+                    title="+5 segundos"
+                  >
+                    +5s
+                  </button>
+                </div>
+              </div>
+
+              {/* Fin Block */}
+              <div style={{ background: "rgba(255, 255, 255, 0.03)", padding: "8px 10px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.06)" }}>
+                <label style={{ fontSize: "11px", color: "rgba(255, 255, 255, 0.6)", display: "block", marginBottom: 6, fontWeight: 500 }}>
+                  Fin (Minutos : Segundos)
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => setEndSec(Math.max(startSec + 2, endSec - 5))}
+                    className={styles.stepperBtn}
+                    title="-5 segundos"
+                  >
+                    -5s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEndSec(Math.max(startSec + 2, endSec - 1))}
+                    className={styles.stepperBtn}
+                    title="-1 segundo"
+                  >
+                    -1s
+                  </button>
+                  <input
+                    type="text"
+                    value={endTimeInput}
+                    onChange={(e) => handleEndTimeChange(e.target.value)}
+                    placeholder="MM:SS"
+                    className="input-field"
+                    style={{
+                      width: "66px",
+                      textAlign: "center",
+                      padding: "4px 6px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      color: "#c084fc",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEndSec(endSec + 1)}
+                    className={styles.stepperBtn}
+                    title="+1 segundo"
+                  >
+                    +1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEndSec(endSec + 5)}
+                    className={styles.stepperBtn}
+                    title="+5 segundos"
+                  >
+                    +5s
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                onClick={() => setIsEditingTime(false)}
+                className={styles.actionBtn}
+                style={{ fontSize: "11.5px", padding: "5px 12px" }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTimes}
+                disabled={isSavingTime}
+                className="btn-primary"
+                style={{ fontSize: "11.5px", padding: "5px 16px" }}
+              >
+                {isSavingTime ? "Guardando..." : "✓ Guardar cambios"}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* SUCCESS BADGE */}
-      {exportSuccess && (
-        <div className={styles.successBadge}>
-          <Check size={13} />
-          ¡Clip exportado y descargado!
-        </div>
-      )}
+        {/* Social Copy Box */}
+        {(clip.caption || clip.hashtags) && showCopyBox && (
+          <div className={styles.socialCopyBox}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {clip.caption && <p className={styles.quoteBox}>"{clip.caption}"</p>}
+                {clip.hashtags && (
+                  <p style={{ color: "#a78bfa", marginTop: 4, fontSize: 11 }}>
+                    {Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                className={styles.actionBtn}
+                onClick={handleCopyText}
+                style={{ fontSize: 11, padding: "4px 8px" }}
+              >
+                {copiedCopy ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Copiar</>}
+              </button>
+            </div>
+          </div>
+        )}
 
-      {/* ACTION BUTTONS ROW */}
-      <div className={styles.actionsRow}>
-
-        {/* Ver clip */}
-        <button
-          className={`${styles.jumpBtn} ${isActive ? styles.jumpBtnActive : ""}`}
-          onClick={() => onJump(startSec)}
-          id={`jump-btn-${index}`}
-        >
-          <Play size={12} fill="currentColor" />
-          {isActive ? "Reproduciendo" : "Ver clip"}
-        </button>
-
-        {/* Editar → Navega a la página del Mini-CapCut Studio */}
-        <button
-          className={styles.editBtn}
-          onClick={() => {
-            const payload = {
-              clip: {
-                id: clip.id,
-                title: clip.title,
-                start_seconds: startSec,
-                end_seconds: endSec,
-                reason: clip.reason,
-                score: clip.score,
-                status: status,
-                caption: clip.caption,
-                hashtags: clip.hashtags,
-              },
-              index,
-              videoId: effectiveVideoId,
-              videoUrl: videoUrl || (effectiveVideoId ? `https://www.youtube.com/watch?v=${effectiveVideoId}` : ""),
-              returnUrl: typeof window !== "undefined" ? window.location.pathname : "/history",
-            };
-            try {
-              sessionStorage.setItem("clypfast_edit_clip", JSON.stringify(payload));
-            } catch { /* ignore */ }
-
-            const sp = new URLSearchParams();
-            if (clip.id) sp.set("clipId", String(clip.id));
-            if (effectiveVideoId) sp.set("videoId", effectiveVideoId);
-            sp.set("start", String(startSec));
-            sp.set("end", String(endSec));
-            sp.set("index", String(index));
-            sp.set("title", clip.title);
-            if (typeof window !== "undefined") sp.set("returnUrl", window.location.pathname);
-            router.push(`/editor?${sp.toString()}`);
-          }}
-          title="Abrir en el editor Mini-CapCut"
-          id={`edit-btn-${index}`}
-        >
-          <Pencil size={12} />
-          Editar
-        </button>
-
-        {/* Descargar → abre modal Fase 2 */}
-        <div className={styles.downloadWrapper}>
-          <button
-            className={styles.downloadBtn}
-            onClick={() => {
-              setCustomizerMode("smart_vertical");
-              setShowCustomizer(true);
-            }}
-            id={`download-btn-${index}`}
-            title="Personalizar y descargar clip"
-          >
-            <Download size={12} />
-            Descargar
-          </button>
-        </div>
-
-        {/* Más opciones */}
-        <button
-          className={styles.moreBtn}
-          onClick={() => setShowCopyBox(!showCopyBox)}
-          title="Ver copy y hashtags"
-        >
-          <MoreHorizontal size={14} />
-        </button>
-
-        {/* YouTube link */}
-        {videoId && (
-          <a
-            href={`https://youtu.be/${videoId}?t=${Math.floor(startSec)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.ytExtLink}
-            title="Abrir en YouTube"
-          >
-            ↗ YouTube
-          </a>
+        {/* Success badge when exported */}
+        {exportSuccess && (
+          <div className={styles.successBadge}>
+            <Check size={13} />
+            <span>¡Clip exportado y listo!</span>
+          </div>
         )}
       </div>
-    </div>
 
-    {/* Modal de Personalización – Fase 2 */}
-    {showCustomizer && (
-      <ClipCustomizerModal
-        clip={{ ...clip, start_seconds: startSec, end_seconds: endSec }}
-        index={index}
-        videoId={videoId}
-        videoUrl={videoUrl}
-        initialMode={customizerMode}
-        onClose={() => setShowCustomizer(false)}
-        onExportDone={(newStatus) => {
-          setStatus(newStatus);
-          setShowCustomizer(false);
-          setExportSuccess(true);
-          setTimeout(() => setExportSuccess(false), 5000);
-        }}
-      />
-    )}
+      {/* Modal de Personalización – Fase 2 */}
+      {showCustomizer && (
+        <ClipCustomizerModal
+          clip={{ ...clip, start_seconds: startSec, end_seconds: endSec }}
+          index={index}
+          videoId={videoId}
+          videoUrl={videoUrl}
+          initialMode={customizerMode}
+          onClose={() => setShowCustomizer(false)}
+          onExportDone={(newStatus) => {
+            setStatus(newStatus);
+            setShowCustomizer(false);
+            setExportSuccess(true);
+            setTimeout(() => setExportSuccess(false), 5000);
+          }}
+        />
+      )}
     </>
   );
 }

@@ -18,6 +18,7 @@ import {
 import YouTubePlayer, { YouTubePlayerRef } from "@/components/YoutubePlayer";
 import ClipCard, { Clip } from "@/components/ClipCard";
 import ProgressSteps from "@/components/ProgressSteps";
+import SmartTimeline from "@/components/SmartTimeline";
 import styles from "./page.module.css";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -439,6 +440,16 @@ export default function AnalyzePage({
                   )}
                 </div>
 
+                {/* Línea de tiempo inteligente */}
+                <SmartTimeline
+                  duration={job?.result?.duration_seconds || job?.duration || 300}
+                  currentTime={0}
+                  clips={clips}
+                  activeClipIndex={activeClipIdx}
+                  onJump={(s, i) => handleJump(s, i ?? 0)}
+                  videoId={videoId}
+                />
+
                 {/* Stats below player */}
                 <div className={styles.statsRow}>
                   <div className={styles.statCard}>
@@ -474,9 +485,9 @@ export default function AnalyzePage({
               <div className={styles.clipsSection}>
                 <div className={styles.clipsHeader}>
                   <div>
-                    <h2 className={styles.clipsTitle}>Clips virales detectados</h2>
+                    <h2 className={styles.clipsTitle}>{clips.length} Momentos Virales</h2>
                     <p className={styles.clipsSubtitle}>
-                      Ordenados por probabilidad de retención y viralidad
+                      Haz clic en un clip para saltar al momento en el video.
                     </p>
                   </div>
                   <Link href="/" className={styles.newAnalysisBtn}>
@@ -497,7 +508,7 @@ export default function AnalyzePage({
                         clip={clip}
                         index={idx}
                         isActive={activeClipIdx === idx}
-                        onJump={() => handleJump(clip.start_seconds, idx)}
+                        onJump={(s) => handleJump(s, idx)}
                         videoId={videoId ?? undefined}
                         videoUrl={videoUrl}
                       />

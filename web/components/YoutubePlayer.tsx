@@ -40,6 +40,7 @@ interface YouTubePlayerInstance {
 
 export interface YouTubePlayerRef {
   seekTo: (seconds: number) => void;
+  getCurrentTime?: () => number;
 }
 
 interface Props {
@@ -77,6 +78,18 @@ const YouTubePlayer = forwardRef<YouTubePlayerRef, Props>(
           // Player not yet ready — queue seek so it executes onReady
           pendingSeekRef.current = seconds;
         }
+      },
+      getCurrentTime: () => {
+        try {
+          if (
+            isReadyRef.current &&
+            playerInstanceRef.current &&
+            typeof playerInstanceRef.current.getCurrentTime === "function"
+          ) {
+            return playerInstanceRef.current.getCurrentTime() || 0;
+          }
+        } catch {}
+        return 0;
       },
     }));
 

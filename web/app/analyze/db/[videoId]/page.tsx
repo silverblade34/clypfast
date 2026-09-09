@@ -1,17 +1,30 @@
 "use client";
 
 /**
- * /analyze/db/[videoId] — Vista de clips desde la base de datos SQLite
- *
- * Esta página carga directamente el video y sus clips del historial persistente,
- * sin depender del job en memoria (que se pierde al reiniciar el servidor).
+ * /analyze/db/[videoId] — Vista de clips mejorada en base al Mockup High-End
  */
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Share2,
+  Plus,
+  BarChart2,
+  Home,
+  History as HistoryIcon,
+  Settings,
+  Bell,
+  ChevronDown,
+  Pencil,
+  Check,
+  Flame,
+} from "lucide-react";
 import YouTubePlayer, { YouTubePlayerRef } from "@/components/YoutubePlayer";
 import ClipCard, { Clip } from "@/components/ClipCard";
+import SmartTimeline from "@/components/SmartTimeline";
 import styles from "../../[jobId]/page.module.css";
 
 interface VideoRecord {
@@ -45,8 +58,8 @@ function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m ${s}s`;
-  return `${m}m ${s}s`;
+  if (h > 0) return `${h} h ${m % 60} min`;
+  return `${m} min ${s} s`;
 }
 
 export default function DbAnalyzePage({
@@ -61,13 +74,15 @@ export default function DbAnalyzePage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeClipIdx, setActiveClipIdx] = useState<number | null>(null);
+  const [playerTime, setPlayerTime] = useState(0);
+  const [sortBy, setSortBy] = useState<"score" | "time" | "duration">("score");
+  const [copiedShare, setCopiedShare] = useState(false);
 
   const playerRef = useRef<YouTubePlayerRef>(null);
 
   // ── Cargar video y clips desde la DB ───────────────────────────────────────
   const loadData = useCallback(async () => {
     try {
-      // Cargar metadatos del video
       const vRes = await fetch(`/api/videos/${videoId}`, { cache: "no-store" });
       if (!vRes.ok) {
         setError(vRes.status === 404 ? "Video no encontrado en el historial." : "Error cargando el video.");
@@ -77,7 +92,6 @@ export default function DbAnalyzePage({
       const vData: VideoRecord = await vRes.json();
       setVideo(vData);
 
-      // Cargar clips
       const cRes = await fetch(`/api/videos/${videoId}/clips`, { cache: "no-store" });
       if (!cRes.ok) {
         setError("Error cargando los clips del video.");
@@ -97,255 +111,332 @@ export default function DbAnalyzePage({
     loadData();
   }, [loadData]);
 
+  // ── Poll player current time for live timeline tracker ────────────────────
+  useEffect(() => {
+    const timer = setInterval(() => {
+      try {
+        if (playerRef.current && typeof playerRef.current.getCurrentTime === "function") {
+          const t = playerRef.current.getCurrentTime();
+          if (typeof t === "number" && !isNaN(t)) {
+            setPlayerTime(t);
+          }
+        }
+      } catch {}
+    }, 600);
+    return () => clearInterval(timer);
+  }, []);
+
   // ── Jump to clip ────────────────────────────────────────────────────────────
-  function handleJump(startSeconds: number, idx: number) {
-    try { playerRef.current?.seekTo(startSeconds); } catch { /* ignore */ }
-    setActiveClipIdx(idx);
-    document.getElementById(`clip-card-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  function handleJump(startSeconds: number, idx?: number) {
+    try {
+      playerRef.current?.seekTo(startSeconds);
+    } catch {}
+    setPlayerTime(startSeconds);
+    if (idx !== undefined) {
+      setActiveClipIdx(idx);
+      document.getElementById(`clip-card-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   }
+
+  // ── Sort Clips ─────────────────────────────────────────────────────────────
+  const sortedClips = useMemo(() => {
+    const list = [...clips];
+    if (sortBy === "score") {
+      list.sort((a, b) => (b.score || 0) - (a.score || 0));
+    } else if (sortBy === "time") {
+      list.sort((a, b) => a.start_seconds - b.start_seconds);
+    } else if (sortBy === "duration") {
+      list.sort((a, b) => (b.end_seconds - b.start_seconds) - (a.end_seconds - a.start_seconds));
+    }
+    return list;
+  }, [clips, sortBy]);
+
+  const handleShare = () => {
+    if (typeof window !== "undefined") {
+      navigator.clipboard.writeText(window.location.href);
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2500);
+    }
+  };
 
   const youtubeVideoId = video?.source_url ? extractYouTubeId(video.source_url) : null;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  return (
-    <div className="page-wrapper">
-      <div className="bg-orbs">
-        <div className="bg-orb bg-orb-1" />
-        <div className="bg-orb bg-orb-2" />
-      </div>
+  // Formatted date
+  const formattedDate = useMemo(() => {
+    if (!video?.created_at) return "Analizado recientemente";
+    try {
+      const d = new Date(video.created_at);
+      return `Analizado ${d.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "short",
+      })}, ${d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
+    } catch {
+      return "Analizado recientemente";
+    }
+  }, [video?.created_at]);
 
-      {/* Header */}
-      <header className={styles.header}>
-        <div className="container">
-          <div className={styles.headerInner}>
-            <Link href="/" className="logo">
+  return (
+    <div className={styles.appShell}>
+      {/* ── Left Sidebar ──────────────────────────────────────────────────── */}
+      <aside className={styles.sidebar}>
+        <div>
+          {/* Logo */}
+          <div className={styles.sidebarLogoWrapper}>
+            <Link href="/" className={styles.logoLink}>
               <Image
                 src="/logo-clypfast.png"
                 alt="ClypFast"
-                width={130}
+                width={135}
                 height={30}
                 style={{ height: "26px", width: "auto", objectFit: "contain" }}
+                priority
               />
             </Link>
+          </div>
 
-            {!loading && !error && video && (
-              <div className={styles.headerMeta}>
-                <span className={styles.metaBadge}>
-                  🗂 Del historial
-                </span>
-                {video.provider && (
-                  <span
-                    className={styles.metaBadge}
-                    style={{
-                      borderColor:
-                        (video.provider || "").toLowerCase() === "groq"
-                          ? "rgba(249, 115, 22, 0.4)"
-                          : "rgba(168, 85, 247, 0.4)",
-                      color:
-                        (video.provider || "").toLowerCase() === "groq"
-                          ? "#fb923c"
-                          : "#c084fc",
-                      background:
-                        (video.provider || "").toLowerCase() === "groq"
-                          ? "rgba(249, 115, 22, 0.15)"
-                          : "rgba(168, 85, 247, 0.15)",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {(video.provider || "").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
-                  </span>
-                )}
-                <span className={styles.metaBadge}>
-                  🎯 {clips.length} clips
-                </span>
-                {video.duration_seconds > 0 && (
-                  <span className={styles.metaBadge}>
-                    ⏱ {formatDuration(video.duration_seconds)}
-                  </span>
-                )}
-                {video.cliente && (
-                  <span className={styles.metaBadge}>
-                    👤 {video.cliente}
-                  </span>
-                )}
-              </div>
-            )}
+          {/* Navigation Links */}
+          <nav className={styles.sidebarNav}>
+            <Link href="/" className={styles.sidebarLink}>
+              <Home size={17} />
+              <span>Inicio</span>
+            </Link>
+            <Link href={`/analyze/db/${videoId}`} className={`${styles.sidebarLink} ${styles.sidebarLinkActive}`}>
+              <BarChart2 size={17} />
+              <span>Análisis</span>
+            </Link>
+            <Link href="/history" className={styles.sidebarLink}>
+              <HistoryIcon size={17} />
+              <span>Historial</span>
+            </Link>
+            <Link href="#configuracion" className={styles.sidebarLink}>
+              <Settings size={17} />
+              <span>Configuración</span>
+            </Link>
+          </nav>
+        </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Link
-                href="/history"
-                style={{
-                  padding: "6px 14px",
-                  fontSize: 12,
-                  borderRadius: 8,
-                  background: "rgba(255, 255, 255, 0.08)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text-muted)",
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  fontWeight: 600,
-                }}
-              >
-                📂 Historial
-              </Link>
-              <Link href="/" className={styles.newAnalysisBtn} id="new-analysis-btn">
-                + Nuevo análisis
-              </Link>
-            </div>
+        {/* Plan Pro card at bottom */}
+        <div className={styles.sidebarPlanCard}>
+          <div className={styles.planHeader}>
+            <span style={{ color: "#ffffff" }}>Plan Pro</span>
+            <span style={{ color: "#38bdf8", fontSize: "11px" }}>245 créditos</span>
+          </div>
+          <div className={styles.planProgressBar}>
+            <div className={styles.planProgressFill} style={{ width: "65%" }} />
           </div>
         </div>
-      </header>
+      </aside>
 
-      <main className={styles.main}>
-        <div className="container">
+      {/* ── Main Content Area ──────────────────────────────────────────────── */}
+      <div className={styles.mainWrapper}>
+        {/* Top Navbar */}
+        <header className={styles.mockupTopBar}>
+          {/* Middle Nav Pills */}
+          <div className={styles.navPillContainer}>
+            <Link href={`/analyze/db/${videoId}`} className={`${styles.navPill} ${styles.navPillActive}`}>
+              Análisis
+            </Link>
+            <Link href="/history" className={styles.navPill}>
+              Historial
+            </Link>
+            <Link href="#configuracion" className={styles.navPill}>
+              Configuración
+            </Link>
+          </div>
 
-          {/* Estado de carga */}
-          {loading && (
-            <div className={styles.initialLoading}>
-              <span className="spinner spinner-lg" />
-              <p>Cargando historial...</p>
-            </div>
-          )}
-
-          {/* Error */}
-          {!loading && error && (
-            <div className={`${styles.errorCard} glass-card fade-in`}>
-              <span className={styles.errorIcon}>⚠️</span>
-              <h2 className={styles.errorTitle}>No se pudo cargar</h2>
-              <p className={styles.errorMsg}>{error}</p>
-              <Link href="/" className="btn-primary" style={{ marginTop: 8 }}>
-                ← Volver al inicio
-              </Link>
-            </div>
-          )}
-
-          {/* Resultado */}
-          {!loading && !error && video && (
-            <>
-              {/* Video Title & Channel Header */}
-              <div
-                className="glass-card fade-in"
+          {/* Right: Notifications & Profile */}
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <button
+              type="button"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "rgba(255, 255, 255, 0.7)",
+                cursor: "pointer",
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+              title="Notificaciones"
+            >
+              <Bell size={18} />
+              <span
                 style={{
-                  padding: "16px 22px",
-                  marginBottom: 20,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 12,
+                  position: "absolute",
+                  top: "-2px",
+                  right: "-2px",
+                  width: "7px",
+                  height: "7px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
                 }}
-              >
+              />
+            </button>
+
+            <div className={styles.userPill}>
+              <div className={styles.userAvatar}>M</div>
+              <span className={styles.userName}>Marcos</span>
+              <ChevronDown size={14} className={styles.userChevron} />
+            </div>
+          </div>
+        </header>
+
+        {/* Loading State */}
+        {loading && (
+          <div className={styles.initialLoading} style={{ padding: "80px 0" }}>
+            <span className="spinner spinner-lg" />
+            <p style={{ marginTop: "16px", color: "rgba(255,255,255,0.7)" }}>Cargando análisis de clips...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {!loading && error && (
+          <div className={`${styles.errorCard} glass-card fade-in`}>
+            <div className={styles.errorIconCircle}>
+              <span style={{ fontSize: "24px" }}>⚠️</span>
+            </div>
+            <h2 className={styles.errorTitle}>No se pudo cargar</h2>
+            <p className={styles.errorMsg}>{error}</p>
+            <Link href="/" className={styles.actionPrimaryBtn} style={{ marginTop: 8 }}>
+              ← Volver al inicio
+            </Link>
+          </div>
+        )}
+
+        {/* Loaded Content */}
+        {!loading && !error && video && (
+          <>
+            {/* ── Video Header Bar ────────────────────────────────────────── */}
+            <div className={styles.videoHeaderBar}>
+              <div className={styles.videoTitleBlock}>
+                <Link href="/history" className={styles.backBtn} title="Volver al historial">
+                  <ArrowLeft size={16} />
+                </Link>
+
                 <div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginBottom: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {video.provider && (
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: "3px 8px",
-                          background:
-                            (video.provider || "").toLowerCase() === "groq"
-                              ? "rgba(249, 115, 22, 0.18)"
-                              : "rgba(168, 85, 247, 0.18)",
-                          color:
-                            (video.provider || "").toLowerCase() === "groq"
-                              ? "#fb923c"
-                              : "#c084fc",
-                          borderRadius: 6,
-                          border: `1px solid ${
-                            (video.provider || "").toLowerCase() === "groq"
-                              ? "rgba(249, 115, 22, 0.35)"
-                              : "rgba(168, 85, 247, 0.35)"
-                          }`,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                      >
-                        {(video.provider || "").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
-                        {video.llm_model ? ` · ${video.llm_model}` : ""}
-                      </span>
-                    )}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <h1 className={styles.videoTitle}>{video.title || `Video #${video.id}`}</h1>
+                    <button
+                      type="button"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "rgba(255,255,255,0.4)",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                      title="Editar título"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  </div>
+
+                  {/* Metadata line */}
+                  <div className={styles.videoMetaRow}>
                     {video.channel && (
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: "3px 9px",
-                          background: "rgba(34, 211, 238, 0.15)",
-                          color: "var(--cyan)",
-                          borderRadius: 6,
-                          border: "1px solid rgba(34, 211, 238, 0.25)",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                      >
-                        📺 {video.channel}
+                      <span style={{ color: "#ffffff", fontWeight: 600 }}>
+                        {video.channel}
                       </span>
                     )}
+                    <span>•</span>
+                    <span>YouTube</span>
+                    {video.duration_seconds > 0 && (
+                      <>
+                        <span>•</span>
+                        <span>{formatDuration(video.duration_seconds)}</span>
+                      </>
+                    )}
+                    <span>•</span>
+                    <span>{formattedDate}</span>
+
+                    {/* Model Provider Pill */}
+                    {video.provider && (
+                      <>
+                        <span>•</span>
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "2px 7px",
+                            borderRadius: "4px",
+                            background:
+                              (video.provider || "").toLowerCase() === "groq"
+                                ? "rgba(249, 115, 22, 0.18)"
+                                : "rgba(168, 85, 247, 0.18)",
+                            color:
+                              (video.provider || "").toLowerCase() === "groq"
+                                ? "#fb923c"
+                                : "#c084fc",
+                            border: `1px solid ${
+                              (video.provider || "").toLowerCase() === "groq"
+                                ? "rgba(249, 115, 22, 0.3)"
+                                : "rgba(168, 85, 247, 0.3)"
+                            }`,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "3px",
+                          }}
+                        >
+                          {(video.provider || "").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
+                        </span>
+                      </>
+                    )}
+
                     {video.cliente && (
                       <span
                         style={{
-                          fontSize: 11,
+                          fontSize: "11px",
                           fontWeight: 700,
-                          padding: "3px 8px",
-                          background: "rgba(167, 139, 250, 0.2)",
+                          padding: "2px 7px",
+                          borderRadius: "4px",
+                          background: "rgba(167, 139, 250, 0.18)",
                           color: "#a78bfa",
-                          borderRadius: 6,
                         }}
                       >
                         🏷️ {video.cliente}
                       </span>
                     )}
-                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                      📅 {new Date(video.created_at).toLocaleDateString("es-ES", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </span>
                   </div>
-
-                  <h1 style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: 0, lineHeight: 1.3 }}>
-                    {video.title || `Video #${video.id}`}
-                  </h1>
                 </div>
+              </div>
 
+              {/* Right Action Buttons */}
+              <div className={styles.headerActions}>
                 {video.source_url && (
                   <a
                     href={video.source_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{
-                      color: "var(--cyan)",
-                      textDecoration: "none",
-                      fontSize: 13,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      fontWeight: 600,
-                    }}
+                    className={styles.actionSecondaryBtn}
+                    title="Ver video original en YouTube"
                   >
-                    ↗ Ver en YouTube
+                    <ExternalLink size={14} />
+                    <span>Ver original</span>
                   </a>
                 )}
+
+                <button
+                  type="button"
+                  className={styles.actionSecondaryBtn}
+                  onClick={handleShare}
+                  title="Compartir enlace de este análisis"
+                >
+                  {copiedShare ? <Check size={14} color="#34d399" /> : <Share2 size={14} />}
+                  <span>{copiedShare ? "¡Copiado!" : "Compartir"}</span>
+                </button>
+
+                <Link href="/" className={styles.actionPrimaryBtn} title="Crear un nuevo análisis">
+                  <Plus size={15} />
+                  <span>Nuevo análisis</span>
+                </Link>
               </div>
+            </div>
 
-              <div className={`${styles.resultsLayout} fade-in`}>
-
-              {/* Izquierda: Player */}
-              <div className={styles.playerSection}>
+            {/* ── 2-Column Dashboard Grid ─────────────────────────────────── */}
+            <div className={styles.dashboardGrid}>
+              {/* Left Column: Player + Smart Timeline */}
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {/* Video Player */}
                 <div className={styles.playerWrapper}>
                   {youtubeVideoId ? (
                     <YouTubePlayer
@@ -356,68 +447,69 @@ export default function DbAnalyzePage({
                   ) : (
                     <div className={styles.noEmbed}>
                       <span>🎬</span>
-                      <p>Video no disponible para reproducción directa.</p>
+                      <p>Video no disponible para reproducción incrustada.</p>
                       {video.source_url && (
                         <a href={video.source_url} target="_blank" rel="noopener noreferrer">
-                          Ver fuente →
+                          Ver fuente original en YouTube →
                         </a>
                       )}
                     </div>
                   )}
                 </div>
 
-                {/* Stats */}
-                <div className={styles.statsRow}>
-                  <div className={styles.statCard}>
-                    <span className={styles.statValue}>{clips.length}</span>
-                    <span className={styles.statLabel}>clips</span>
-                  </div>
-                  <div className={styles.statCard}>
-                    <span className={styles.statValue}>
-                      {video.duration_seconds > 0 ? formatDuration(video.duration_seconds) : "—"}
-                    </span>
-                    <span className={styles.statLabel}>duración</span>
-                  </div>
-                  {clips.length > 0 && (
-                    <div className={styles.statCard}>
-                      <span className={styles.statValue}>{clips[0].score}/10</span>
-                      <span className={styles.statLabel}>top score</span>
-                    </div>
-                  )}
-                  <div className={styles.statCard}>
-                    <span className={styles.statValue} style={{ fontSize: 11 }}>
-                      {new Date(video.created_at).toLocaleDateString("es-MX", {
-                        day: "numeric",
-                        month: "short",
-                      })}
-                    </span>
-                    <span className={styles.statLabel}>analizado</span>
-                  </div>
-                </div>
+                {/* Línea de tiempo inteligente */}
+                <SmartTimeline
+                  duration={video.duration_seconds || 300}
+                  currentTime={playerTime}
+                  clips={clips}
+                  activeClipIndex={activeClipIdx}
+                  onJump={handleJump}
+                  videoId={youtubeVideoId}
+                />
               </div>
 
-              {/* Derecha: Lista de clips */}
-              <div className={styles.clipsSection}>
-                <div className={styles.clipsHeader}>
-                  <h2 className={styles.clipsTitle}>
-                    🎯{" "}
-                    <span className="gradient-text">
-                      {clips.length} Momentos Virales
-                    </span>
-                  </h2>
-                  <p className={styles.clipsSubtitle}>
-                    Haz clic en un clip para saltar al momento en el video
-                  </p>
+              {/* Right Column: Viral Moments List */}
+              <div>
+                {/* Clips Mockup Header */}
+                <div className={styles.clipsMockupHeader}>
+                  <div>
+                    <div className={styles.clipsMockupTitleBlock}>
+                      <span style={{ color: "#38bdf8", display: "flex" }}>
+                        <BarChart2 size={20} />
+                      </span>
+                      <h2 className={styles.clipsMockupTitle}>
+                        {clips.length} Momentos Virales
+                      </h2>
+                    </div>
+                    <p className={styles.clipsMockupSubtitle}>
+                      Haz clic en un clip para saltar al momento en el video.
+                    </p>
+                  </div>
+
+                  {/* Sort Dropdown */}
+                  <div className={styles.sortSelectWrapper}>
+                    <span>Ordenar por:</span>
+                    <select
+                      className={styles.sortSelect}
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as "score" | "time" | "duration")}
+                    >
+                      <option value="score">Score</option>
+                      <option value="time">Inicio en video</option>
+                      <option value="duration">Duración</option>
+                    </select>
+                  </div>
                 </div>
 
-                {clips.length === 0 ? (
-                  <div className={`${styles.noClips} glass-card`}>
-                    <span>😔</span>
-                    <p>Este video no tiene clips guardados.</p>
+                {/* Clips List */}
+                {sortedClips.length === 0 ? (
+                  <div className={`${styles.emptyClips} glass-card`}>
+                    <span style={{ fontSize: "32px" }}>📂</span>
+                    <p>No se encontraron clips guardados para este video.</p>
                   </div>
                 ) : (
                   <div className={styles.clipsList}>
-                    {clips.map((clip, i) => (
+                    {sortedClips.map((clip, i) => (
                       <ClipCard
                         key={clip.id ?? i}
                         clip={clip}
@@ -431,13 +523,10 @@ export default function DbAnalyzePage({
                   </div>
                 )}
               </div>
-
             </div>
-            </>
-          )}
-
-        </div>
-      </main>
+          </>
+        )}
+      </div>
     </div>
   );
 }
