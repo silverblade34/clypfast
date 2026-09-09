@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -799,6 +800,101 @@ async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
             select(Clip).where(Clip.video_id == video_id).order_by(col(Clip.score).desc())
         ).all()
         return [c.model_dump() for c in clips]
+
+
+@app.get("/videos/{video_id}/transcript")
+async def get_video_transcript(
+    video_id: int,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Retrieve full or filtered transcript for a video."""
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+    from clipfinder.downloader import get_source_id
+
+    with Session(engine) as session:
+        v = session.get(Video, video_id)
+        if not v:
+            raise HTTPException(status_code=404, detail="Video no encontrado")
+
+        source = v.source_url or v.source_path or ""
+        source_id = get_source_id(source)
+        transcript_file = Path("outputs") / source_id / "transcript.json"
+
+        if not transcript_file.exists():
+            found = False
+            for p in Path("outputs").glob(f"*{source_id}*/transcript.json"):
+                transcript_file = p
+                found = True
+                break
+            if not found:
+                return {
+                    "video_id": video_id,
+                    "text": "",
+                    "segments": [],
+                    "available": False,
+                }
+
+        try:
+            raw_segs = json.loads(transcript_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Error reading transcript for video %s: %s", video_id, e)
+            return {"video_id": video_id, "text": "", "segments": [], "available": False}
+
+        filtered_segs = []
+        for s in raw_segs:
+            s_start = float(s.get("start", 0))
+            s_end = float(s.get("end", 0))
+            if start_seconds is not None and end_seconds is not None:
+                overlap_start = max(s_start, start_seconds)
+                overlap_end = min(s_end, end_seconds)
+                overlap_sec = max(0.0, overlap_end - overlap_start)
+                seg_dur = max(0.1, s_end - s_start)
+                midpoint = (s_start + s_end) / 2.0
+
+                # Include segment only if its center point falls within the range
+                # or if it has significant overlap (at least 40% of duration or >= 4 seconds)
+                is_in_range = (
+                    (start_seconds <= midpoint <= end_seconds)
+                    or (overlap_sec / seg_dur >= 0.40)
+                    or (overlap_sec >= 4.0)
+                )
+                if is_in_range:
+                    filtered_segs.append(s)
+            else:
+                filtered_segs.append(s)
+
+        full_text = " ".join(s.get("text", "").strip() for s in filtered_segs if s.get("text"))
+        return {
+            "video_id": video_id,
+            "start_seconds": start_seconds,
+            "end_seconds": end_seconds,
+            "text": full_text,
+            "segments": filtered_segs,
+            "available": True,
+        }
+
+
+@app.get("/clips/{clip_id}/transcript")
+async def get_clip_transcript(clip_id: int) -> dict[str, Any]:
+    """Retrieve full transcript text for a specific clip based on its timestamps."""
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Clip
+
+    with Session(engine) as session:
+        clip = session.get(Clip, clip_id)
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip no encontrado")
+
+        return await get_video_transcript(
+            video_id=clip.video_id,
+            start_seconds=clip.start_seconds,
+            end_seconds=clip.end_seconds,
+        )
+
 
 
 

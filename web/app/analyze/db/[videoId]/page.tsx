@@ -175,13 +175,22 @@ export default function DbAnalyzePage({
     }
   }, [video?.created_at]);
 
+  const handleUpdateClipTimes = (clipId: number, startSec: number, endSec: number) => {
+    setClips((prev) =>
+      prev.map((c) =>
+        c.id === clipId ? { ...c, start_seconds: startSec, end_seconds: endSec } : c
+      )
+    );
+  };
+
   return (
     <div className={styles.appShell}>
-      {/* ── Left Sidebar ──────────────────────────────────────────────────── */}
-      <aside className={styles.sidebar}>
-        <div>
-          {/* Logo */}
-          <div className={styles.sidebarLogoWrapper}>
+      {/* ── Main Content Area ──────────────────────────────────────────────── */}
+      <div className={styles.mainWrapper}>
+        {/* Top Navbar */}
+        <header className={styles.mockupTopBar}>
+          {/* Left: Logo & Nav Links */}
+          <div style={{ display: "flex", alignItems: "center", gap: "28px" }}>
             <Link href="/" className={styles.logoLink}>
               <Image
                 src="/logo-clypfast.png"
@@ -192,60 +201,42 @@ export default function DbAnalyzePage({
                 priority
               />
             </Link>
+
+            {/* Navigation Pills */}
+            <nav className={styles.navPillContainer}>
+              <Link href="/" className={styles.navPill}>
+                Inicio
+              </Link>
+              <Link href={`/analyze/db/${videoId}`} className={`${styles.navPill} ${styles.navPillActive}`}>
+                Análisis
+              </Link>
+              <Link href="/history" className={styles.navPill}>
+                Historial
+              </Link>
+              <Link href="/#configuracion" className={styles.navPill}>
+                Configuración
+              </Link>
+            </nav>
           </div>
 
-          {/* Navigation Links */}
-          <nav className={styles.sidebarNav}>
-            <Link href="/" className={styles.sidebarLink}>
-              <Home size={17} />
-              <span>Inicio</span>
-            </Link>
-            <Link href={`/analyze/db/${videoId}`} className={`${styles.sidebarLink} ${styles.sidebarLinkActive}`}>
-              <BarChart2 size={17} />
-              <span>Análisis</span>
-            </Link>
-            <Link href="/history" className={styles.sidebarLink}>
-              <HistoryIcon size={17} />
-              <span>Historial</span>
-            </Link>
-            <Link href="#configuracion" className={styles.sidebarLink}>
-              <Settings size={17} />
-              <span>Configuración</span>
-            </Link>
-          </nav>
-        </div>
-
-        {/* Plan Pro card at bottom */}
-        <div className={styles.sidebarPlanCard}>
-          <div className={styles.planHeader}>
-            <span style={{ color: "#ffffff" }}>Plan Pro</span>
-            <span style={{ color: "#38bdf8", fontSize: "11px" }}>245 créditos</span>
-          </div>
-          <div className={styles.planProgressBar}>
-            <div className={styles.planProgressFill} style={{ width: "65%" }} />
-          </div>
-        </div>
-      </aside>
-
-      {/* ── Main Content Area ──────────────────────────────────────────────── */}
-      <div className={styles.mainWrapper}>
-        {/* Top Navbar */}
-        <header className={styles.mockupTopBar}>
-          {/* Middle Nav Pills */}
-          <div className={styles.navPillContainer}>
-            <Link href={`/analyze/db/${videoId}`} className={`${styles.navPill} ${styles.navPillActive}`}>
-              Análisis
-            </Link>
-            <Link href="/history" className={styles.navPill}>
-              Historial
-            </Link>
-            <Link href="#configuracion" className={styles.navPill}>
-              Configuración
-            </Link>
-          </div>
-
-          {/* Right: Notifications & Profile */}
+          {/* Right: Plan Pro badge, Notifications & Profile */}
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "rgba(255, 255, 255, 0.04)",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                padding: "5px 12px",
+                borderRadius: "99px",
+                fontSize: "12px",
+              }}
+            >
+              <span style={{ color: "#ffffff", fontWeight: 600 }}>Plan Pro</span>
+              <span style={{ color: "#38bdf8", fontWeight: 700 }}>245 créditos</span>
+            </div>
+
             <button
               type="button"
               style={{
@@ -465,6 +456,8 @@ export default function DbAnalyzePage({
                   activeClipIndex={activeClipIdx}
                   onJump={handleJump}
                   videoId={youtubeVideoId}
+                  dbVideoId={video.id}
+                  onUpdateClipTimes={handleUpdateClipTimes}
                 />
               </div>
 

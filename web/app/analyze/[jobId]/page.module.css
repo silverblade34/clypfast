@@ -702,7 +702,9 @@
 /* ── Mockup Full-App Shell ─────────────────────────────────────────────────── */
 .appShell {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  width: 100%;
   background: #080b12;
   color: #ffffff;
   position: relative;
