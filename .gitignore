@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+*.env.local
+
+# Project outputs (audio files, transcripts, reports)
+outputs/
+*.wav
+*.mp3
+*.mp4
+*.webm
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Hugging Face / Whisper model cache
+# (don't commit downloaded models)
+# ~/.cache/huggingface is outside project, so nothing to ignore here

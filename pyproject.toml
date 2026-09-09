@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clipfinder"
+version = "0.1.0"
+description = "Detector de momentos virales en videos largos para TikTok/Reels/Shorts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["video", "viral", "tiktok", "reels", "shorts", "ai", "whisper", "llm"]
+dependencies = [
+    "typer[all]>=0.12.0",
+    "rich>=13.7.0",
+    "yt-dlp>=2024.8.0",
+    "faster-whisper>=1.0.3",
+    "groq>=0.9.0",
+    "google-generativeai>=0.8.0",
+    "pydantic>=2.7.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+clipfinder = "clipfinder.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+web = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["clipfinder"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
