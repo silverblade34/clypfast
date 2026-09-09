@@ -41,7 +41,34 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Pre-check historial: si la URL ya fue procesada
+  const [historyMatch, setHistoryMatch] = useState<{ id: number; title: string; clips_count: number } | null>(null);
+  const [checkingHistory, setCheckingHistory] = useState(false);
+
   const isYouTubeUrl = (u: string) => /youtube\.com|youtu\.be/.test(u);
+
+  /** Busca en la DB si la URL ya fue analizada. Se llama al perder el foco del input. */
+  async function checkHistory(inputUrl: string) {
+    if (!inputUrl.trim() || !isYouTubeUrl(inputUrl)) {
+      setHistoryMatch(null);
+      return;
+    }
+    setCheckingHistory(true);
+    try {
+      const res = await fetch(`/api/videos/lookup?url=${encodeURIComponent(inputUrl.trim())}`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryMatch({ id: data.id, title: data.title, clips_count: data.clips_count });
+      } else {
+        setHistoryMatch(null);
+      }
+    } catch {
+      setHistoryMatch(null);
+    } finally {
+      setCheckingHistory(false);
+    }
+  }
+
 
   async function handleAnalyze(e: React.FormEvent) {
     e.preventDefault();
@@ -52,8 +79,24 @@ export default function HomePage() {
       return;
     }
 
+    // Si ya tenemos una coincidencia en el historial, redirigir directo
+    if (historyMatch) {
+      router.push(`/analyze/db/${historyMatch.id}`);
+      return;
+    }
+
     setError("");
     setLoading(true);
+
+    // Re-verificar por si el usuario no hizo blur
+    try {
+      const lookupRes = await fetch(`/api/videos/lookup?url=${encodeURIComponent(url.trim())}`);
+      if (lookupRes.ok) {
+        const existing = await lookupRes.json();
+        router.push(`/analyze/db/${existing.id}`);
+        return;
+      }
+    } catch { /* not found, proceed with new analysis */ }
 
     try {
       const res = await fetch("/api/analyze", {
@@ -166,7 +209,17 @@ export default function HomePage() {
                   type="url"
                   placeholder="https://youtube.com/watch?v=..."
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    if (historyMatch) setHistoryMatch(null);
+                  }}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData("text");
+                    if (pasted && isYouTubeUrl(pasted)) {
+                      checkHistory(pasted);
+                    }
+                  }}
+                  onBlur={(e) => checkHistory(e.target.value)}
                   className={styles.urlInput}
                   disabled={loading}
                   required
@@ -183,6 +236,16 @@ export default function HomePage() {
                       <Loader2 size={14} className="animate-spin" />
                       <span>Iniciando...</span>
                     </>
+                  ) : checkingHistory ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Buscando...</span>
+                    </>
+                  ) : historyMatch ? (
+                    <>
+                      <ArrowRight size={14} strokeWidth={2.5} />
+                      <span>Ver clips</span>
+                    </>
                   ) : (
                     <>
                       <ArrowRight size={14} strokeWidth={2.5} />
@@ -191,6 +254,64 @@ export default function HomePage() {
                   )}
                 </button>
               </div>
+
+              {/* Banner: URL ya procesada en el historial */}
+              {historyMatch && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 14px",
+                  borderRadius: "10px",
+                  background: "rgba(34, 211, 238, 0.07)",
+                  border: "1px solid rgba(34, 211, 238, 0.2)",
+                  marginTop: 4,
+                  flexWrap: "wrap",
+                }}>
+                  <span style={{ fontSize: 16 }}>🗂</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#22d3ee" }}>
+                      Video ya analizado — {historyMatch.clips_count} clips guardados
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {historyMatch.title}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/analyze/db/${historyMatch.id}`)}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: "7px",
+                      background: "rgba(34, 211, 238, 0.9)",
+                      border: "none",
+                      color: "#001a22",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Ver clips guardados
+                  </button>
+                  <button
+                    type="submit"
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: "7px",
+                      background: "transparent",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      color: "#64748b",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                    onClick={() => setHistoryMatch(null)}
+                  >
+                    Re-analizar
+                  </button>
+                </div>
+              )}
 
               {/* 2x2 Selectors Grid */}
               <div className={styles.selectorsRow}>

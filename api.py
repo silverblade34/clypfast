@@ -621,6 +621,72 @@ async def list_videos() -> list[dict[str, Any]]:
         return results
 
 
+@app.get("/videos/lookup")
+async def lookup_video_by_url(url: str) -> dict[str, Any]:
+    """
+    Check if a YouTube URL was previously processed.
+    Returns the video record (with id, title, clips_count) if found,
+    or raises 404 if not in the database.
+    """
+    from sqlmodel import Session, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+    from clipfinder.downloader import _extract_video_id
+
+    # Normalize: strip trailing slash and whitespace
+    normalized_url = url.strip().rstrip("/")
+    input_vid = _extract_video_id(normalized_url) if ("youtube.com" in normalized_url or "youtu.be" in normalized_url) else None
+
+    with Session(engine) as session:
+        videos = session.exec(
+            select(Video).where(Video.source_url.isnot(None)).order_by(Video.id.desc())  # type: ignore[attr-defined]
+        ).all()
+
+        for v in videos:
+            stored = (v.source_url or "").strip().rstrip("/")
+            stored_vid = _extract_video_id(stored) if ("youtube.com" in stored or "youtu.be" in stored) else None
+
+            # Match exact URL or same YouTube video ID
+            is_match = (stored == normalized_url) or (
+                input_vid and stored_vid and input_vid == stored_vid and input_vid != "video"
+            )
+
+            if is_match:
+                return {
+                    "found": True,
+                    "id": v.id,
+                    "title": v.title,
+                    "source_url": v.source_url,
+                    "duration_seconds": v.duration_seconds,
+                    "created_at": v.created_at.isoformat(),
+                    "clips_count": len(v.clips),
+                }
+
+    raise HTTPException(status_code=404, detail="Video not found in history")
+
+
+@app.get("/videos/{video_id}")
+async def get_video(video_id: int) -> dict[str, Any]:
+    """Get a single video record with its clip count."""
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+
+    with Session(engine) as session:
+        v = session.get(Video, video_id)
+        if not v:
+            raise HTTPException(status_code=404, detail="Video no encontrado")
+        return {
+            "id": v.id,
+            "title": v.title,
+            "source_url": v.source_url,
+            "duration_seconds": v.duration_seconds,
+            "cliente": v.cliente,
+            "created_at": v.created_at.isoformat(),
+            "clips_count": len(v.clips),
+        }
+
+
 @app.get("/videos/{video_id}/clips")
 async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
     """Get all clips belonging to a video."""
@@ -633,6 +699,7 @@ async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
             select(Clip).where(Clip.video_id == video_id).order_by(col(Clip.score).desc())
         ).all()
         return [c.model_dump() for c in clips]
+
 
 
 class UpdateClipRequest(BaseModel):
