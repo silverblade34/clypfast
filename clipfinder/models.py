@@ -95,6 +95,31 @@ class ClipCandidate(BaseModel):
         except (ValueError, TypeError):
             return 7
 
+    @field_validator("start_seconds", "end_seconds", mode="before")
+    @classmethod
+    def parse_seconds(cls, v: Any) -> float:
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            val = v.strip()
+            # If formatted as MM:SS or HH:MM:SS
+            parts = val.split(":")
+            if len(parts) == 2:
+                try:
+                    return float(parts[0]) * 60.0 + float(parts[1])
+                except (ValueError, TypeError):
+                    pass
+            elif len(parts) == 3:
+                try:
+                    return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+                except (ValueError, TypeError):
+                    pass
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return 0.0
+        return 0.0
+
     @property
     def duration(self) -> float:
         return self.end_seconds - self.start_seconds

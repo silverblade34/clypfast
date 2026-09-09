@@ -544,9 +544,10 @@
 /* ── Results state ────────────────────────────────────────────────────────── */
 .resultsLayout {
   display: grid;
-  grid-template-columns: 480px 1fr;
-  gap: 32px;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 28px;
   align-items: start;
+  width: 100%;
 }
 
 .playerSection {

@@ -37,7 +37,8 @@ import styles from "./ClipCustomizerModal.module.css";
 /* ─── Tipos ─────────────────────────────────────────────────── */
 
 type CropMode = "smart_vertical" | "vertical_blur" | "original" | "split_screen";
-type SubTheme = "hormozi" | "minimal" | "cyberpunk" | "none";
+type SubTheme = "hormozi" | "minimal" | "cyberpunk" | "podcast" | "neon" | "classic" | "duotone" | "none";
+type HookDecor = "none" | "fire" | "arrow" | "star" | "lightning" | "mic" | "bar";
 
 interface ColorPreset {
   label: string;
@@ -95,18 +96,32 @@ const COLOR_PRESETS: ColorPreset[] = [
   },
 ];
 
-const THEME_CONFIG: Record<SubTheme, { label: string; fontLabel: string }> = {
-  hormozi: { label: "Hormozi", fontLabel: "Arial Black" },
-  minimal: { label: "Minimal", fontLabel: "Helvetica" },
-  cyberpunk: { label: "Cyberpunk", fontLabel: "Impact" },
-  none: { label: "Sin subs", fontLabel: "" },
+const THEME_CONFIG: Record<SubTheme, { label: string; fontLabel: string; preview: string; desc: string }> = {
+  hormozi: { label: "Hormozi", fontLabel: "Arial Black", preview: "BOLD", desc: "Texto grueso negro" },
+  minimal: { label: "Minimal", fontLabel: "Helvetica", preview: "clean", desc: "Sutil y elegante" },
+  cyberpunk: { label: "Cyberpunk", fontLabel: "Impact", preview: "IMPACT", desc: "Agresivo y viral" },
+  podcast: { label: "Podcast", fontLabel: "Arial", preview: "Podcast", desc: "Nombre del speaker" },
+  neon: { label: "Neon", fontLabel: "Impact", preview: "GLOW", desc: "Brillo neón" },
+  classic: { label: "Classic", fontLabel: "Times", preview: "Classic", desc: "Estilo clásico TV" },
+  duotone: { label: "Duotone", fontLabel: "Helvetica", preview: "DUO\nTONE", desc: "Dos colores" },
+  none: { label: "Sin subs", fontLabel: "", preview: "—", desc: "Solo gancho" },
 };
 
-const MODE_CONFIG: { id: CropMode; label: string; desc: string }[] = [
-  { id: "smart_vertical", label: "IA Smart", desc: "Face tracking" },
-  { id: "vertical_blur", label: "Blur BG", desc: "Fondo suave" },
-  { id: "split_screen", label: "Podcast", desc: "Dos personas" },
-  { id: "original", label: "Original", desc: "Sin recorte" },
+const HOOK_DECORS: { id: HookDecor; label: string; prefix: string; suffix: string }[] = [
+  { id: "none",      label: "Limpio",    prefix: "",    suffix: "" },
+  { id: "fire",      label: "Fuego",     prefix: "🔥 ", suffix: " 🔥" },
+  { id: "arrow",     label: "Flecha",    prefix: "▶ ",  suffix: "" },
+  { id: "star",      label: "Estrellas", prefix: "★ ",  suffix: " ★" },
+  { id: "lightning", label: "Rayo",      prefix: "⚡ ", suffix: " ⚡" },
+  { id: "mic",       label: "Micrófono", prefix: "🎙 ", suffix: "" },
+  { id: "bar",       label: "Barra",     prefix: "| ",  suffix: " |" },
+];
+
+const MODE_CONFIG: { id: CropMode; label: string; desc: string; icon: string }[] = [
+  { id: "smart_vertical", label: "IA Smart",   desc: "Face tracking automático", icon: "🤖" },
+  { id: "vertical_blur",  label: "Blur BG",    desc: "Fondo difuminado suave",   icon: "🌫" },
+  { id: "split_screen",   label: "Podcast",    desc: "Pantalla dividida",        icon: "🎙" },
+  { id: "original",       label: "Original",   desc: "Sin recorte 16:9",         icon: "📐" },
 ];
 
 /* ─── Utilidades (espejadas del backend para WYSIWYG determinista) ── */
@@ -155,10 +170,11 @@ export default function ClipCustomizerModal({
   const [endSec, setEndSec] = useState(clip.end_seconds);
   const videoDurationEstimate = endSec - startSec; // duración editable en tiempo real
 
-  // ── Estado: Gancho ───────────────────────────────────────────
+  // ── Estado: Gancho ───────────────────────────────────────────────
   const [hookEnabled, setHookEnabled] = useState(true);
   const [hookText, setHookText] = useState(clip.title);
   const [hookDuration, setHookDuration] = useState(3.5);
+  const [hookDecor, setHookDecor] = useState<HookDecor>("none");
 
   // ── Estado: Subtítulos ───────────────────────────────────────
   const [subTheme, setSubTheme] = useState<SubTheme>("hormozi");
@@ -371,14 +387,15 @@ export default function ClipCustomizerModal({
                 </div>
               )}
 
-              {/* HUD: Gancho */}
-              {hookEnabled && hookText && (
-                <div className={styles.hookHUD}>
-                  <span className={styles.hookStar}>★ </span>
-                  {deterministicLineBreak(hookText)}
-                  <span className={styles.hookStar}> ★</span>
-                </div>
-              )}
+              {/* HUD: Gancho con decorador seleccionable */}
+              {hookEnabled && hookText && (() => {
+                const decor = HOOK_DECORS.find(d => d.id === hookDecor) || HOOK_DECORS[0];
+                return (
+                  <div className={styles.hookHUD}>
+                    {decor.prefix}{deterministicLineBreak(hookText)}{decor.suffix}
+                  </div>
+                );
+              })()}
 
               {/* HUD: Subtítulos demo */}
               {subTheme !== "none" && (
@@ -502,6 +519,36 @@ export default function ClipCustomizerModal({
                     />
                   </div>
 
+                  {/* Hook Decor Selector */}
+                  <div className={styles.fieldRow}>
+                    <label className={styles.fieldLabel}>Decorador del gancho</label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {HOOK_DECORS.map((d) => (
+                        <button
+                          key={d.id}
+                          onClick={() => setHookDecor(d.id)}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: hookDecor === d.id ? 700 : 400,
+                            border: hookDecor === d.id
+                              ? "1px solid #38bdf8"
+                              : "1px solid rgba(255,255,255,0.1)",
+                            background: hookDecor === d.id
+                              ? "rgba(56,189,248,0.12)"
+                              : "rgba(255,255,255,0.03)",
+                            color: hookDecor === d.id ? "#38bdf8" : "rgba(255,255,255,0.7)",
+                            cursor: "pointer",
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          {d.prefix || d.label}{d.prefix ? d.label : ""}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className={styles.fieldRow}>
                     <label className={styles.fieldLabel}>
                       Duración en pantalla: {hookDuration.toFixed(1)}s
@@ -535,19 +582,46 @@ export default function ClipCustomizerModal({
               </div>
 
               <div className={styles.fieldRow}>
-                <label className={styles.fieldLabel}>Tema base</label>
-                <div className={styles.themeGrid}>
-                  {(Object.entries(THEME_CONFIG) as [SubTheme, { label: string; fontLabel: string }][]).map(
+                <label className={styles.fieldLabel}>Plantilla de subtítulos</label>
+                {/* Gallery-style template grid inspired by CapCut */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: "6px",
+                  marginTop: "4px",
+                }}>
+                  {(Object.entries(THEME_CONFIG) as [SubTheme, { label: string; fontLabel: string; preview: string; desc: string }][]).map(
                     ([id, cfg]) => (
                       <button
                         key={id}
                         className={`${styles.themeBtn} ${subTheme === id ? styles.active : ""}`}
                         onClick={() => setSubTheme(id)}
+                        title={cfg.desc}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "8px 4px",
+                          minHeight: "52px",
+                        }}
                       >
-                        <span>{cfg.label}</span>
-                        {cfg.fontLabel && (
-                          <span style={{ fontSize: 8, opacity: 0.6 }}>{cfg.fontLabel}</span>
-                        )}
+                        <span style={{
+                          fontSize: id === "none" ? "14px" : "10px",
+                          fontWeight: ["hormozi", "cyberpunk", "neon"].includes(id) ? 900 : 400,
+                          fontStyle: id === "classic" ? "italic" : "normal",
+                          fontFamily: cfg.fontLabel || "inherit",
+                          letterSpacing: ["hormozi", "cyberpunk"].includes(id) ? "-0.03em" : "normal",
+                          color: id === "neon" ? "#00ffcc"
+                            : id === "cyberpunk" ? "#ff0055"
+                            : id === "duotone" ? "#a855f7"
+                            : id === "podcast" ? "#38bdf8"
+                            : "inherit",
+                          textShadow: id === "neon" ? "0 0 8px #00ffcc" : "none",
+                          lineHeight: 1.1,
+                          whiteSpace: "pre",
+                        }}>{cfg.preview}</span>
+                        <span style={{ fontSize: 8, opacity: 0.65 }}>{cfg.label}</span>
                       </button>
                     )
                   )}
@@ -610,14 +684,20 @@ export default function ClipCustomizerModal({
                 <span className={styles.sectionTitle}>Formato de Exportación</span>
               </div>
 
-              <div className={styles.formatGrid}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, 1fr)",
+                gap: "6px",
+              }}>
                 {MODE_CONFIG.map((m) => (
                   <button
                     key={m.id}
                     className={`${styles.formatBtn} ${mode === m.id ? styles.active : ""}`}
                     onClick={() => setMode(m.id)}
+                    style={{ padding: "10px 8px" }}
                   >
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 18, marginBottom: 2 }}>{m.icon}</span>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1 }}>
                       <span style={{ fontSize: 11 }}>{m.label}</span>
                       <span style={{ fontSize: 9, opacity: 0.55, marginTop: 1 }}>{m.desc}</span>
                     </div>

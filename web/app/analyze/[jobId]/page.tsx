@@ -156,17 +156,50 @@ export default function AnalyzePage({
     }
   }
 
-  const clips = job?.result?.clips ?? [];
+  const [playerTime, setPlayerTime] = useState(0);
+  const [localClips, setLocalClips] = useState<Clip[]>([]);
+
+  useEffect(() => {
+    if (job?.result?.clips) {
+      setLocalClips(job.result.clips);
+    }
+  }, [job?.result?.clips]);
+
+  const clips = localClips.length > 0 ? localClips : (job?.result?.clips ?? []);
   const videoUrl = job?.url ?? "";
   const videoId = job?.video_id || extractYouTubeId(videoUrl);
   const isDone = job?.status === "done";
   const isError = job?.status === "error" || !!error;
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      try {
+        if (playerRef.current && typeof playerRef.current.getCurrentTime === "function") {
+          const t = playerRef.current.getCurrentTime();
+          if (typeof t === "number" && !isNaN(t)) {
+            setPlayerTime(t);
+          }
+        }
+      } catch {}
+    }, 600);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleUpdateClipTimes = (clipId: number, startSec: number, endSec: number) => {
+    setLocalClips((prev) =>
+      prev.map((c) =>
+        c.id === clipId ? { ...c, start_seconds: startSec, end_seconds: endSec } : c
+      )
+    );
+  };
 
   // Calculate estimated time remaining
   const estimatedMin =
     job?.duration && job.duration > 0
       ? Math.max(1, Math.round((job.duration / 60) * 0.15))
       : 3;
+
+  const dbVidId = (job?.result as any)?.video_db_id ?? (job?.video_id && !isNaN(Number(job.video_id)) ? Number(job.video_id) : null);
 
   return (
     <div className="page-wrapper">
@@ -220,7 +253,8 @@ export default function AnalyzePage({
 
       {/* Main Container */}
       <main className={styles.main}>
-        <div className="container">
+        {!isDone && (
+          <div className="container">
           {/* ── LOADING / IN-PROGRESS VIEW ───────────────────────────────── */}
           {!isDone && !isError && job && (
             <div className={styles.progressLayout}>
@@ -411,12 +445,15 @@ export default function AnalyzePage({
               </Link>
             </div>
           )}
+        </div>
+      )}
 
-          {/* ── RESULTS VIEW (WHEN DONE) ────────────────────────────────── */}
-          {isDone && (
-            <div className={`${styles.resultsLayout} fade-in`}>
-              {/* Left: Video player (sticky) */}
-              <div className={styles.playerSection}>
+      {/* ── RESULTS VIEW (WHEN DONE) ────────────────────────────────── */}
+        {isDone && (
+          <div className={styles.mainWrapper}>
+            <div className={`${styles.dashboardGrid} fade-in`}>
+              {/* Left: Video player */}
+              <div style={{ display: "flex", flexDirection: "column" }}>
                 <div className={styles.playerWrapper}>
                   {videoId ? (
                     <YouTubePlayer
@@ -443,11 +480,13 @@ export default function AnalyzePage({
                 {/* Línea de tiempo inteligente */}
                 <SmartTimeline
                   duration={job?.result?.duration_seconds || job?.duration || 300}
-                  currentTime={0}
+                  currentTime={playerTime}
                   clips={clips}
                   activeClipIndex={activeClipIdx}
                   onJump={(s, i) => handleJump(s, i ?? 0)}
                   videoId={videoId}
+                  dbVideoId={dbVidId}
+                  onUpdateClipTimes={handleUpdateClipTimes}
                 />
 
                 {/* Stats below player */}
@@ -482,15 +521,17 @@ export default function AnalyzePage({
               </div>
 
               {/* Right: Clips list */}
-              <div className={styles.clipsSection}>
-                <div className={styles.clipsHeader}>
+              <div>
+                <div className={styles.clipsMockupHeader}>
                   <div>
-                    <h2 className={styles.clipsTitle}>{clips.length} Momentos Virales</h2>
-                    <p className={styles.clipsSubtitle}>
+                    <div className={styles.clipsMockupTitleBlock}>
+                      <h2 className={styles.clipsMockupTitle}>{clips.length} Momentos Virales</h2>
+                    </div>
+                    <p className={styles.clipsMockupSubtitle}>
                       Haz clic en un clip para saltar al momento en el video.
                     </p>
                   </div>
-                  <Link href="/" className={styles.newAnalysisBtn}>
+                  <Link href="/" className={styles.actionPrimaryBtn}>
                     + Nuevo análisis
                   </Link>
                 </div>
@@ -517,8 +558,8 @@ export default function AnalyzePage({
                 )}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </main>
     </div>
   );

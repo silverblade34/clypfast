@@ -977,6 +977,45 @@ async def filter_clips(status: str | None = None, cliente: str | None = None) ->
         return results
 
 
+import time
+
+_stream_url_cache: dict[str, tuple[float, str]] = {}
+
+
+def _get_cached_stream_url(source_url: str) -> str | None:
+    now = time.time()
+    if source_url in _stream_url_cache:
+        exp, url = _stream_url_cache[source_url]
+        if now < exp:
+            return url
+
+    try:
+        import yt_dlp
+        ydl_opts: Any = {
+            "quiet": True,
+            "format": "bestvideo[height<=360]/worst",
+            "skip_download": True,
+            "no_warnings": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info: Any = ydl.extract_info(source_url, download=False)
+            stream_url = None
+            if isinstance(info, dict):
+                url_val = info.get("url")
+                if isinstance(url_val, str):
+                    stream_url = url_val
+                elif isinstance(info.get("formats"), list) and info["formats"]:
+                    first_fmt = info["formats"][0]
+                    if isinstance(first_fmt, dict) and isinstance(first_fmt.get("url"), str):
+                        stream_url = first_fmt["url"]
+            if isinstance(stream_url, str):
+                _stream_url_cache[source_url] = (now + 7200, stream_url)
+                return stream_url
+    except Exception as e:
+        logger.warning("Could not extract stream URL for %s: %s", source_url, e)
+    return None
+
+
 @app.get("/clips/{clip_id}/thumbnail")
 async def get_clip_thumbnail(clip_id: int):
     """Return an exact video frame thumbnail at start_seconds for this clip."""
@@ -1010,36 +1049,22 @@ async def get_clip_thumbnail(clip_id: int):
     if thumb_path.exists() and thumb_path.stat().st_size > 500:
         return FileResponse(str(thumb_path), media_type="image/jpeg")
 
-    # Try extracting exact frame
+    # If local file exists, extract local frame in milliseconds
     try:
         if source_path and Path(source_path).exists():
             cmd = [
                 "ffmpeg", "-y", "-ss", str(start_sec), "-i", str(source_path),
                 "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
             ]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
             if thumb_path.exists() and thumb_path.stat().st_size > 500:
                 return FileResponse(str(thumb_path), media_type="image/jpeg")
-        elif source_url:
-            import yt_dlp
-            ydl_opts = {"quiet": True, "format": "bestvideo[height<=360]/worst"}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(source_url, download=False)
-                stream_url = info.get("url") or (info.get("formats") and info["formats"][0].get("url"))
-            if stream_url:
-                cmd = [
-                    "ffmpeg", "-y", "-ss", str(start_sec), "-i", stream_url,
-                    "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
-                ]
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if thumb_path.exists() and thumb_path.stat().st_size > 500:
-                    return FileResponse(str(thumb_path), media_type="image/jpeg")
     except Exception as exc:
-        logger.warning(f"Error generating thumbnail for clip {clip_id}: {exc}")
+        logger.warning(f"Error generating thumbnail for local clip {clip_id}: {exc}")
 
-    # Fallback to YouTube default thumbnail
+    # For YouTube videos, immediately redirect to Google CDN (instant 20ms, zero server load)
     if yt_id:
-        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg")
+        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg", status_code=302)
     raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
 
 
@@ -1083,13 +1108,9 @@ async def get_video_frame_thumbnail(video_id: int, time: float = 0.0):
             if thumb_path.exists() and thumb_path.stat().st_size > 500:
                 return FileResponse(str(thumb_path), media_type="image/jpeg")
         elif source_url:
-            import yt_dlp
-            ydl_opts = {"quiet": True, "format": "bestvideo[height<=360]/worst"}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(source_url, download=False)
-                stream_url = info.get("url") or (info.get("formats") and info["formats"][0].get("url"))
-            if stream_url:
-                cmd = [
+            stream_url = _get_cached_stream_url(source_url)
+            if isinstance(stream_url, str):
+                cmd: list[str] = [
                     "ffmpeg", "-y", "-ss", str(time), "-i", stream_url,
                     "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
                 ]

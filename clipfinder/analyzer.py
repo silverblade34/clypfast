@@ -105,8 +105,14 @@ REGLA CRÍTICA DE DURACIÓN (OBLIGATORIA):
 - NUNCA selecciones una sola línea o frase aislada de subtítulo. Cada clip DEBE contener una idea, historia, debate o explicación COMPLETA con gancho (hook), desarrollo y remate.
 - Asegúrate de que (end_seconds - start_seconds) >= 20.
 
+REGLA CRÍTICA DE TIMESTAMPS (OBLIGATORIA):
+- Cada línea de la transcripción tiene su tiempo real entre corchetes, ej: "[34:15 - 35:02] ...".
+- "start_seconds" y "end_seconds" DEBEN ser los timestamps EXACTOS del video copiados de la transcripción.
+- Puedes escribir "start_seconds" y "end_seconds" en formato "MM:SS" (por ejemplo "34:15" y "35:02") o en segundos totales (ej. 2055 y 2102).
+- ESTÁ ESTRICTAMENTE PROHIBIDO usar tiempos relativos (como "00:15" o "00:31" cuando el texto dice "[34:15]"). Debe ser el timestamp real del video completo.
+
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
-{{"clips": [{{"start_seconds": 0.0, "end_seconds": 0.0, "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Copy sugerido para TikTok/Reels con gancho y llamada a la acción", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
+{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Copy sugerido para TikTok/Reels con gancho y llamada a la acción", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
 
 - "title": máximo 60 caracteres, en el mismo idioma del video
 - "reason": 1-2 oraciones explicando el potencial viral específico
@@ -475,6 +481,14 @@ def analyze_segments(
                 api_key,
                 content_type=content_type,
             )
+
+            # Reconcile any relative timestamps from LLM:
+            for c in chunk_clips:
+                if start_s > 90.0 and c.start_seconds < (start_s - 45.0):
+                    if (start_s + c.start_seconds) <= (end_s + 45.0):
+                        c.start_seconds = round(start_s + c.start_seconds, 1)
+                        c.end_seconds = round(start_s + c.end_seconds, 1)
+
             all_clips.extend(chunk_clips)
         except Exception as exc:
             error_msg = str(exc)[:120]

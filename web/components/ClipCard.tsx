@@ -138,14 +138,16 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
 
   const effectiveVideoId = videoId || extractYouTubeId(videoUrl);
 
-  // Use exact clip frame thumbnail from backend with fallback to YouTube snapshot
-  const primaryThumb = clip.id
-    ? `/api/clips/${clip.id}/thumbnail`
-    : effectiveVideoId
-      ? `https://img.youtube.com/vi/${effectiveVideoId}/1.jpg`
+  // Direct YouTube CDN snapshot (0% server load, instant 20ms load from Google Edge CDN)
+  const thumbIndex = (index % 3) + 1;
+  const primaryThumb = effectiveVideoId
+    ? `https://img.youtube.com/vi/${effectiveVideoId}/${thumbIndex}.jpg`
+    : clip.id
+      ? `/api/clips/${clip.id}/thumbnail`
       : null;
 
   const [thumbSrc, setThumbSrc] = useState<string | null>(primaryThumb);
+  const [thumbLoaded, setThumbLoaded] = useState(false);
 
   // Sync inputs when startSec/endSec change
   useEffect(() => {
@@ -233,12 +235,14 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
             onClick={() => onJump(startSec)}
             title="Reproducir este momento"
           >
+            {!thumbLoaded && <div className={styles.skeletonShimmer} />}
             {thumbSrc ? (
               <img
                 src={thumbSrc}
                 alt={clip.title}
-                className={styles.thumb}
+                className={`${styles.thumb} ${thumbLoaded ? styles.thumbVisible : styles.thumbHidden}`}
                 loading="lazy"
+                onLoad={() => setThumbLoaded(true)}
                 onError={() => {
                   // Fallback to YouTube snapshot
                   if (effectiveVideoId && thumbSrc !== `https://img.youtube.com/vi/${effectiveVideoId}/1.jpg`) {
@@ -246,6 +250,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                   } else if (effectiveVideoId) {
                     setThumbSrc(`https://img.youtube.com/vi/${effectiveVideoId}/mqdefault.jpg`);
                   }
+                  setThumbLoaded(true);
                 }}
               />
             ) : (
@@ -314,8 +319,8 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                 <span>{isActive ? "Reproduciendo" : "Ver clip"}</span>
               </button>
 
-              {/* 2. Editar (Mini-CapCut Studio) */}
-              <button
+              {/* 2. Editar (Mini-CapCut Studio) — temporalmente oculto */}
+              {/* <button
                 type="button"
                 className={styles.actionBtn}
                 onClick={() => {
@@ -355,7 +360,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
               >
                 <Pencil size={12} />
                 <span>Editar</span>
-              </button>
+              </button> */}
 
               {/* 3. Descargar (Personalizar 9:16) */}
               <button

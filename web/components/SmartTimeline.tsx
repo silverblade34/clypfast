@@ -39,23 +39,34 @@ function ChapterThumb({
   isCurrent: boolean;
 }) {
   const [src, setSrc] = useState<string | null>(() => {
+    if (videoId) return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
     if (clipId) return `/api/clips/${clipId}/thumbnail`;
-    if (videoId) return `https://img.youtube.com/vi/${videoId}/1.jpg`;
     return null;
   });
+  const [loaded, setLoaded] = useState(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
-    if (clipId) {
+    setLoaded(false);
+    if (videoId) {
+      setSrc(`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`);
+    } else if (clipId) {
       setSrc(`/api/clips/${clipId}/thumbnail`);
-    } else if (videoId) {
-      setSrc(`https://img.youtube.com/vi/${videoId}/1.jpg`);
     }
   }, [clipId, videoId]);
 
-  const handleError = () => {
-    if (videoId && src && !src.includes("mqdefault.jpg")) {
-      setSrc(`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`);
+  // Fix race condition: if image loaded from cache before onLoad was attached
+  useEffect(() => {
+    if (imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
+      setLoaded(true);
     }
+  });
+
+  const handleError = () => {
+    if (videoId && src && !src.includes("hqdefault.jpg")) {
+      setSrc(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
+    }
+    setLoaded(true);
   };
 
   if (!src) {
@@ -76,19 +87,36 @@ function ChapterThumb({
   }
 
   return (
-    <img
-      src={src}
-      alt={label}
-      onError={handleError}
-      loading="lazy"
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        opacity: isCurrent ? 1 : 0.78,
-        transition: "opacity 0.2s ease, transform 0.2s ease",
-      }}
-    />
+    <>
+      {!loaded && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "linear-gradient(90deg, rgba(30, 41, 59, 0.85) 0%, rgba(51, 65, 85, 0.95) 50%, rgba(30, 41, 59, 0.85) 100%)",
+            backgroundSize: "200% 100%",
+            animation: "shimmerWave 1.6s infinite linear",
+            zIndex: 1,
+          }}
+        />
+      )}
+      <img
+        ref={imgRef}
+        src={src}
+        alt={label}
+        onLoad={() => setLoaded(true)}
+        onError={handleError}
+        loading="eager"
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          opacity: loaded ? (isCurrent ? 1 : 0.78) : 0,
+          transition: "opacity 0.25s ease, transform 0.2s ease",
+        }}
+      />
+    </>
   );
 }
 
@@ -576,39 +604,6 @@ export default function SmartTimeline({
           </div>
         )}
 
-        {/* Clip Pin Markers (Discrete Voice/Moment pips) */}
-        {showSegments &&
-          clips.map((c, i) => {
-            const pinPct = duration > 0 ? (c.start_seconds / duration) * 100 : 0;
-            const isSelected = activeClipIndex === i;
-            // If it's the selected clip, the draggable selection box represents it cleanly without clutter
-            if (isSelected) return null;
-
-            return (
-              <div
-                key={c.id ?? i}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onJump(c.start_seconds, i);
-                }}
-                style={{
-                  position: "absolute",
-                  left: `${pinPct}%`,
-                  top: "3px",
-                  transform: "translateX(-50%)",
-                  width: "4px",
-                  height: "4px",
-                  borderRadius: "50%",
-                  background: "rgba(192, 132, 252, 0.7)",
-                  boxShadow: "0 0 4px rgba(192, 132, 252, 0.4)",
-                  cursor: "pointer",
-                  zIndex: 8,
-                  transition: "all 0.15s ease",
-                }}
-                title={`Clip #${i + 1}: ${c.title} (${formatTime(c.start_seconds)})`}
-              />
-            );
-          })}
 
         {/* Active Playhead Cursor */}
         <div
