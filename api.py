@@ -601,12 +601,12 @@ async def download_clip_file(filename: str) -> FileResponse:
 @app.get("/videos")
 async def list_videos() -> list[dict[str, Any]]:
     """List all historical processed videos with clip counts."""
-    from sqlmodel import Session, select
+    from sqlmodel import Session, col, select
     from clipfinder.db import engine
     from clipfinder.models import Video
 
     with Session(engine) as session:
-        videos = session.exec(select(Video).order_by(Video.created_at.desc())).all()  # type: ignore[attr-defined]
+        videos = session.exec(select(Video).order_by(col(Video.created_at).desc())).all()
         results: list[dict[str, Any]] = []
         for v in videos:
             v_dict = v.model_dump()
@@ -621,6 +621,19 @@ async def list_videos() -> list[dict[str, Any]]:
         return results
 
 
+@app.get("/clients")
+async def get_clients() -> list[str]:
+    """Return all unique client/brand names registered in the database, sorted alphabetically."""
+    from sqlmodel import Session, col, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+
+    with Session(engine) as session:
+        records = session.exec(select(Video.cliente).where(col(Video.cliente).is_not(None))).all()
+        clients = sorted(list({c.strip() for c in records if c and c.strip()}))
+        return clients
+
+
 @app.get("/videos/lookup")
 async def lookup_video_by_url(url: str) -> dict[str, Any]:
     """
@@ -628,7 +641,7 @@ async def lookup_video_by_url(url: str) -> dict[str, Any]:
     Returns the video record (with id, title, clips_count) if found,
     or raises 404 if not in the database.
     """
-    from sqlmodel import Session, select
+    from sqlmodel import Session, col, select
     from clipfinder.db import engine
     from clipfinder.models import Video
     from clipfinder.downloader import _extract_video_id
@@ -639,7 +652,7 @@ async def lookup_video_by_url(url: str) -> dict[str, Any]:
 
     with Session(engine) as session:
         videos = session.exec(
-            select(Video).where(Video.source_url.isnot(None)).order_by(Video.id.desc())  # type: ignore[attr-defined]
+            select(Video).where(col(Video.source_url).is_not(None)).order_by(col(Video.id).desc())
         ).all()
 
         for v in videos:

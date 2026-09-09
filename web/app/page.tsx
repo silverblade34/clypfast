@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
@@ -29,6 +29,7 @@ import {
   Subtitles,
   RefreshCw,
   X,
+  Plus,
 } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -43,11 +44,51 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Clientes registrados en historial y memoria local
+  const [clientList, setClientList] = useState<string[]>([]);
+  const [isCreatingNewClient, setIsCreatingNewClient] = useState(false);
+
   // Pre-check historial: si la URL ya fue procesada
   const [historyMatch, setHistoryMatch] = useState<{ id: number; title: string; clips_count: number } | null>(null);
   const [checkingHistory, setCheckingHistory] = useState(false);
   // Permite al usuario ignorar la coincidencia para re-analizar con nuevos parámetros
   const [dismissedMatchUrl, setDismissedMatchUrl] = useState<string | null>(null);
+
+  // ── Restaurar preferencias y cargar clientes al montar ───────────────
+  useEffect(() => {
+    // 1. Restaurar última selección de tipo de contenido
+    try {
+      const savedType = localStorage.getItem("clypfast_last_content_type");
+      if (savedType) {
+        setContentType(savedType);
+      }
+    } catch {}
+
+    // 2. Cargar lista de clientes (Backend SQLite + localStorage)
+    async function loadClients() {
+      let dbClients: string[] = [];
+      try {
+        const res = await fetch("/api/clients");
+        if (res.ok) {
+          dbClients = await res.json();
+        }
+      } catch {}
+
+      let localClients: string[] = [];
+      try {
+        const stored = localStorage.getItem("clypfast_custom_clients");
+        if (stored) {
+          localClients = JSON.parse(stored);
+        }
+      } catch {}
+
+      const merged = Array.from(
+        new Set([...dbClients, ...localClients].map((c) => c.trim()).filter(Boolean))
+      );
+      setClientList(merged);
+    }
+    loadClients();
+  }, []);
 
   const isYouTubeUrl = (u: string) => /youtube\.com|youtu\.be/.test(u);
 
@@ -109,13 +150,26 @@ export default function HomePage() {
     setError("");
     setLoading(true);
 
+    const finalClient = cliente.trim();
+    if (finalClient) {
+      try {
+        const stored = localStorage.getItem("clypfast_custom_clients");
+        const currentList: string[] = stored ? JSON.parse(stored) : [];
+        if (!currentList.includes(finalClient)) {
+          const updated = [...currentList, finalClient];
+          localStorage.setItem("clypfast_custom_clients", JSON.stringify(updated));
+          setClientList((prev) => Array.from(new Set([...prev, finalClient])));
+        }
+      } catch {}
+    }
+
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: cleanUrl,
-          cliente: cliente.trim() || undefined,
+          cliente: finalClient || undefined,
           content_type: contentType,
           transcription_engine: transcriptionEngine,
           whisper_model: whisperModel,
@@ -366,7 +420,13 @@ export default function HomePage() {
                   <select
                     className={styles.selectNative}
                     value={contentType}
-                    onChange={(e) => setContentType(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setContentType(val);
+                      try {
+                        localStorage.setItem("clypfast_last_content_type", val);
+                      } catch {}
+                    }}
                     disabled={loading}
                     id="content-type-select"
                   >
@@ -430,21 +490,80 @@ export default function HomePage() {
                   </span>
                 </div>
 
-                {/* 4. Cliente o Marca (Opcional) */}
+                {/* 4. Cliente o Marca (Select o Registrar Nuevo) */}
                 <div className={styles.selectBox}>
-                  <div className={styles.selectHeader}>
-                    <Tag size={12} strokeWidth={2} />
-                    <span>Cliente o Marca (Opcional)</span>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div className={styles.selectHeader}>
+                      <Tag size={12} strokeWidth={2} />
+                      <span>Cliente o Marca</span>
+                    </div>
+                    {clientList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingNewClient(!isCreatingNewClient);
+                          if (isCreatingNewClient) setCliente("");
+                        }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: isCreatingNewClient ? "#94a3b8" : "#38bdf8",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          padding: "1px 4px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                        title={isCreatingNewClient ? "Volver a seleccionar de la lista" : "Registrar nuevo cliente"}
+                      >
+                        {isCreatingNewClient ? "← Lista" : "+ Nuevo"}
+                      </button>
+                    )}
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Nombre de cliente o proyecto..."
-                    value={cliente}
-                    onChange={(e) => setCliente(e.target.value)}
-                    disabled={loading}
-                    className={styles.inputNative}
-                    id="cliente-input"
-                  />
+
+                  {isCreatingNewClient || clientList.length === 0 ? (
+                    <input
+                      type="text"
+                      placeholder="Nombre del cliente o marca..."
+                      value={cliente}
+                      onChange={(e) => setCliente(e.target.value)}
+                      disabled={loading}
+                      className={styles.inputNative}
+                      id="cliente-input"
+                      autoFocus={isCreatingNewClient}
+                    />
+                  ) : (
+                    <select
+                      className={styles.selectNative}
+                      value={cliente}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "__NEW__") {
+                          setIsCreatingNewClient(true);
+                          setCliente("");
+                        } else {
+                          setCliente(val);
+                        }
+                      }}
+                      disabled={loading}
+                      id="cliente-select"
+                    >
+                      <option value="">Sin cliente (General)</option>
+                      {clientList.map((c) => (
+                        <option key={c} value={c}>
+                          🏷️ {c}
+                        </option>
+                      ))}
+                      <option value="__NEW__">➕ Registrar nuevo cliente...</option>
+                    </select>
+                  )}
+                  {!isCreatingNewClient && clientList.length > 0 && (
+                    <span className={styles.chevronIcon}>
+                      <ChevronDown size={13} strokeWidth={2} />
+                    </span>
+                  )}
                 </div>
               </div>
 
