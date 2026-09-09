@@ -27,6 +27,8 @@ import {
   Server,
   Cloud,
   Subtitles,
+  RefreshCw,
+  X,
 } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -44,18 +46,21 @@ export default function HomePage() {
   // Pre-check historial: si la URL ya fue procesada
   const [historyMatch, setHistoryMatch] = useState<{ id: number; title: string; clips_count: number } | null>(null);
   const [checkingHistory, setCheckingHistory] = useState(false);
+  // Permite al usuario ignorar la coincidencia para re-analizar con nuevos parámetros
+  const [dismissedMatchUrl, setDismissedMatchUrl] = useState<string | null>(null);
 
   const isYouTubeUrl = (u: string) => /youtube\.com|youtu\.be/.test(u);
 
-  /** Busca en la DB si la URL ya fue analizada. Se llama al perder el foco del input. */
+  /** Busca en la DB si la URL ya fue analizada. Se llama al perder el foco del input o al pegar. */
   async function checkHistory(inputUrl: string) {
-    if (!inputUrl.trim() || !isYouTubeUrl(inputUrl)) {
+    const cleanUrl = inputUrl.trim();
+    if (!cleanUrl || !isYouTubeUrl(cleanUrl) || cleanUrl === dismissedMatchUrl) {
       setHistoryMatch(null);
       return;
     }
     setCheckingHistory(true);
     try {
-      const res = await fetch(`/api/videos/lookup?url=${encodeURIComponent(inputUrl.trim())}`);
+      const res = await fetch(`/api/videos/lookup?url=${encodeURIComponent(cleanUrl)}`);
       if (res.ok) {
         const data = await res.json();
         setHistoryMatch({ id: data.id, title: data.title, clips_count: data.clips_count });
@@ -69,41 +74,47 @@ export default function HomePage() {
     }
   }
 
+  /**
+   * Ejecuta el análisis.
+   * @param forceNew Si es true, ignora el historial y procesa el video desde cero con IA.
+   */
+  async function triggerAnalysis(forceNew = false) {
+    const cleanUrl = url.trim();
+    if (!cleanUrl) return;
 
-  async function handleAnalyze(e: React.FormEvent) {
-    e.preventDefault();
-    if (!url.trim()) return;
-
-    if (!isYouTubeUrl(url)) {
+    if (!isYouTubeUrl(cleanUrl)) {
       setError("Por favor ingresa una URL válida de YouTube.");
       return;
     }
 
-    // Si ya tenemos una coincidencia en el historial, redirigir directo
-    if (historyMatch) {
-      router.push(`/analyze/db/${historyMatch.id}`);
-      return;
+    // Si no es forzado y hay coincidencia en historial, redirigir directo
+    if (!forceNew) {
+      if (historyMatch && cleanUrl !== dismissedMatchUrl) {
+        router.push(`/analyze/db/${historyMatch.id}`);
+        return;
+      }
+
+      if (cleanUrl !== dismissedMatchUrl) {
+        try {
+          const lookupRes = await fetch(`/api/videos/lookup?url=${encodeURIComponent(cleanUrl)}`);
+          if (lookupRes.ok) {
+            const existing = await lookupRes.json();
+            router.push(`/analyze/db/${existing.id}`);
+            return;
+          }
+        } catch { /* not found, proceed */ }
+      }
     }
 
     setError("");
     setLoading(true);
-
-    // Re-verificar por si el usuario no hizo blur
-    try {
-      const lookupRes = await fetch(`/api/videos/lookup?url=${encodeURIComponent(url.trim())}`);
-      if (lookupRes.ok) {
-        const existing = await lookupRes.json();
-        router.push(`/analyze/db/${existing.id}`);
-        return;
-      }
-    } catch { /* not found, proceed with new analysis */ }
 
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: url.trim(),
+          url: cleanUrl,
           cliente: cliente.trim() || undefined,
           content_type: contentType,
           transcription_engine: transcriptionEngine,
@@ -124,6 +135,11 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : "Error desconocido");
       setLoading(false);
     }
+  }
+
+  function handleAnalyze(e: React.FormEvent) {
+    e.preventDefault();
+    triggerAnalysis(false);
   }
 
   return (
@@ -264,16 +280,16 @@ export default function HomePage() {
                   padding: "10px 14px",
                   borderRadius: "10px",
                   background: "rgba(34, 211, 238, 0.07)",
-                  border: "1px solid rgba(34, 211, 238, 0.2)",
+                  border: "1px solid rgba(34, 211, 238, 0.25)",
                   marginTop: 4,
                   flexWrap: "wrap",
                 }}>
                   <span style={{ fontSize: 16 }}>🗂</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#22d3ee" }}>
-                      Video ya analizado — {historyMatch.clips_count} clips guardados
+                      Video ya analizado — {historyMatch.clips_count} {historyMatch.clips_count === 1 ? "clip guardado" : "clips guardados"}
                     </div>
-                    <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {historyMatch.title}
                     </div>
                   </div>
@@ -281,7 +297,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => router.push(`/analyze/db/${historyMatch.id}`)}
                     style={{
-                      padding: "5px 12px",
+                      padding: "6px 12px",
                       borderRadius: "7px",
                       background: "rgba(34, 211, 238, 0.9)",
                       border: "none",
@@ -295,20 +311,46 @@ export default function HomePage() {
                     Ver clips guardados
                   </button>
                   <button
-                    type="submit"
+                    type="button"
                     style={{
-                      padding: "5px 10px",
+                      padding: "6px 11px",
                       borderRadius: "7px",
-                      background: "transparent",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      color: "#64748b",
+                      background: "rgba(255,255,255,0.08)",
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      color: "#e2e8f0",
                       fontSize: 11,
+                      fontWeight: 600,
                       cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
                       whiteSpace: "nowrap",
                     }}
-                    onClick={() => setHistoryMatch(null)}
+                    onClick={() => triggerAnalysis(true)}
+                    disabled={loading}
+                    title="Forzar un análisis nuevo completo con IA"
                   >
-                    Re-analizar
+                    <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+                    <span>Re-analizar de nuevo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDismissedMatchUrl(url.trim());
+                      setHistoryMatch(null);
+                    }}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      padding: 4,
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                    title="Descartar aviso para reconfigurar opciones"
+                  >
+                    <X size={14} />
                   </button>
                 </div>
               )}

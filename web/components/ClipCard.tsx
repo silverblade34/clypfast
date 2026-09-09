@@ -14,7 +14,7 @@ export interface Clip {
   score: number;
   status?: string;
   caption?: string;
-  hashtags?: string;
+  hashtags?: string | string[];
 }
 
 interface Props {
@@ -50,14 +50,19 @@ function getScoreIcon(score: number): string {
 
 /**
  * Deriva tags de contexto a partir de los hashtags del clip.
+ * Soporta tanto string ("#tag1 #tag2") como Array (["#tag1", "#tag2"]) provenientes de la IA.
  * Toma los primeros 3 hashtags, limpia el # y capitaliza.
- * Si no hay hashtags, devuelve un array vacío.
  */
-function deriveTags(hashtags?: string): string[] {
+function deriveTags(hashtags?: string | string[]): string[] {
   if (!hashtags) return [];
-  return hashtags
-    .split(/[\s,]+/)
-    .filter((t) => t.startsWith("#"))
+  const list: string[] = Array.isArray(hashtags)
+    ? hashtags
+    : typeof hashtags === "string"
+      ? hashtags.split(/[\s,]+/)
+      : [];
+
+  return list
+    .filter((t) => typeof t === "string" && t.trim().startsWith("#"))
     .slice(0, 3)
     .map((t) => t.replace(/^#/, "").replace(/([A-Z])/g, " $1").trim());
 }
@@ -150,7 +155,10 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   };
 
   const handleCopyText = () => {
-    const text = `${clip.caption || clip.title}\n\n${clip.hashtags || ""}`.trim();
+    const hashtagsStr = Array.isArray(clip.hashtags)
+      ? clip.hashtags.join(" ")
+      : (clip.hashtags || "");
+    const text = `${clip.caption || clip.title}\n\n${hashtagsStr}`.trim();
     navigator.clipboard.writeText(text);
     setCopiedCopy(true);
     setTimeout(() => setCopiedCopy(false), 2500);
@@ -302,7 +310,11 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               {clip.caption && <p className={styles.captionText}>"{clip.caption}"</p>}
-              {clip.hashtags && <p className={styles.hashtagsText}>{clip.hashtags}</p>}
+              {clip.hashtags && (
+                <p className={styles.hashtagsText}>
+                  {Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags}
+                </p>
+              )}
             </div>
             <button className={styles.copyBtn} onClick={handleCopyText}>
               {copiedCopy ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Copiar</>}
