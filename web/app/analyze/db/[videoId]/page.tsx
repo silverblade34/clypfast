@@ -23,6 +23,8 @@ interface VideoRecord {
   cliente: string | null;
   created_at: string;
   clips_count: number;
+  provider?: string | null;
+  llm_model?: string | null;
 }
 
 function extractYouTubeId(url: string): string | null {
@@ -131,6 +133,28 @@ export default function DbAnalyzePage({
                 <span className={styles.metaBadge}>
                   🗂 Del historial
                 </span>
+                {video.provider && (
+                  <span
+                    className={styles.metaBadge}
+                    style={{
+                      borderColor:
+                        (video.provider || "").toLowerCase() === "groq"
+                          ? "rgba(249, 115, 22, 0.4)"
+                          : "rgba(168, 85, 247, 0.4)",
+                      color:
+                        (video.provider || "").toLowerCase() === "groq"
+                          ? "#fb923c"
+                          : "#c084fc",
+                      background:
+                        (video.provider || "").toLowerCase() === "groq"
+                          ? "rgba(249, 115, 22, 0.15)"
+                          : "rgba(168, 85, 247, 0.15)",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {(video.provider || "").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
+                  </span>
+                )}
                 <span className={styles.metaBadge}>
                   🎯 {clips.length} clips
                 </span>
@@ -223,6 +247,35 @@ export default function DbAnalyzePage({
                       flexWrap: "wrap",
                     }}
                   >
+                    {video.provider && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "3px 8px",
+                          background:
+                            (video.provider || "").toLowerCase() === "groq"
+                              ? "rgba(249, 115, 22, 0.18)"
+                              : "rgba(168, 85, 247, 0.18)",
+                          color:
+                            (video.provider || "").toLowerCase() === "groq"
+                              ? "#fb923c"
+                              : "#c084fc",
+                          borderRadius: 6,
+                          border: `1px solid ${
+                            (video.provider || "").toLowerCase() === "groq"
+                              ? "rgba(249, 115, 22, 0.35)"
+                              : "rgba(168, 85, 247, 0.35)"
+                          }`,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        {(video.provider || "").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
+                        {video.llm_model ? ` · ${video.llm_model}` : ""}
+                      </span>
+                    )}
                     {video.channel && (
                       <span
                         style={{

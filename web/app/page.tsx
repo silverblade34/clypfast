@@ -30,6 +30,7 @@ import {
   RefreshCw,
   X,
   Plus,
+  Bot,
 } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -41,6 +42,7 @@ export default function HomePage() {
   const [transcriptionEngine, setTranscriptionEngine] = useState("auto");
   const [whisperModel, setWhisperModel] = useState("small");
   const [maxClips, setMaxClips] = useState("12");
+  const [provider, setProvider] = useState<"groq" | "gemini">("groq");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,18 +51,28 @@ export default function HomePage() {
   const [isCreatingNewClient, setIsCreatingNewClient] = useState(false);
 
   // Pre-check historial: si la URL ya fue procesada
-  const [historyMatch, setHistoryMatch] = useState<{ id: number; title: string; clips_count: number } | null>(null);
+  const [historyMatch, setHistoryMatch] = useState<{
+    id: number;
+    title: string;
+    clips_count: number;
+    provider?: string | null;
+    llm_model?: string | null;
+  } | null>(null);
   const [checkingHistory, setCheckingHistory] = useState(false);
   // Permite al usuario ignorar la coincidencia para re-analizar con nuevos parámetros
   const [dismissedMatchUrl, setDismissedMatchUrl] = useState<string | null>(null);
 
   // ── Restaurar preferencias y cargar clientes al montar ───────────────
   useEffect(() => {
-    // 1. Restaurar última selección de tipo de contenido
+    // 1. Restaurar última selección de tipo de contenido y proveedor
     try {
       const savedType = localStorage.getItem("clypfast_last_content_type");
       if (savedType) {
         setContentType(savedType);
+      }
+      const savedProvider = localStorage.getItem("clypfast_preferred_provider") as "groq" | "gemini" | null;
+      if (savedProvider && (savedProvider === "groq" || savedProvider === "gemini")) {
+        setProvider(savedProvider);
       }
     } catch {}
 
@@ -128,11 +140,14 @@ export default function HomePage() {
       return;
     }
 
-    // Si no es forzado y hay coincidencia en historial, redirigir directo
+    // Si no es forzado y hay coincidencia en historial con EL MISMO MODELO, redirigir directo.
+    // Si el usuario eligió un proveedor distinto (ej. Groq vs Gemini), se permite analizar para comparar.
     if (!forceNew) {
       if (historyMatch && cleanUrl !== dismissedMatchUrl) {
-        router.push(`/analyze/db/${historyMatch.id}`);
-        return;
+        if (historyMatch.provider === provider) {
+          router.push(`/analyze/db/${historyMatch.id}`);
+          return;
+        }
       }
 
       if (cleanUrl !== dismissedMatchUrl) {
@@ -140,8 +155,10 @@ export default function HomePage() {
           const lookupRes = await fetch(`/api/videos/lookup?url=${encodeURIComponent(cleanUrl)}`);
           if (lookupRes.ok) {
             const existing = await lookupRes.json();
-            router.push(`/analyze/db/${existing.id}`);
-            return;
+            if (existing.provider === provider) {
+              router.push(`/analyze/db/${existing.id}`);
+              return;
+            }
           }
         } catch { /* not found, proceed */ }
       }
@@ -174,7 +191,7 @@ export default function HomePage() {
           transcription_engine: transcriptionEngine,
           whisper_model: whisperModel,
           max_clips: Number(maxClips),
-          provider: "gemini",
+          provider: provider,
         }),
       });
 
@@ -331,62 +348,78 @@ export default function HomePage() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  padding: "10px 14px",
-                  borderRadius: "10px",
-                  background: "rgba(34, 211, 238, 0.07)",
+                  padding: "12px 16px",
+                  borderRadius: "12px",
+                  background: "rgba(34, 211, 238, 0.08)",
                   border: "1px solid rgba(34, 211, 238, 0.25)",
-                  marginTop: 4,
+                  marginTop: 6,
                   flexWrap: "wrap",
                 }}>
-                  <span style={{ fontSize: 16 }}>🗂</span>
+                  <span style={{ fontSize: 18 }}>🗂</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#22d3ee" }}>
-                      Video ya analizado — {historyMatch.clips_count} {historyMatch.clips_count === 1 ? "clip guardado" : "clips guardados"}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#22d3ee", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span>Ya analizado</span>
+                      {historyMatch.provider && (
+                        <span style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          background: historyMatch.provider === "groq" ? "rgba(249, 115, 22, 0.2)" : "rgba(168, 85, 247, 0.2)",
+                          color: historyMatch.provider === "groq" ? "#f97316" : "#c084fc",
+                          border: `1px solid ${historyMatch.provider === "groq" ? "rgba(249, 115, 22, 0.3)" : "rgba(168, 85, 247, 0.3)"}`,
+                          fontWeight: 800,
+                        }}>
+                          {historyMatch.provider === "groq" ? "⚡ Groq" : "✨ Gemini"}
+                        </span>
+                      )}
+                      <span style={{ color: "#94a3b8", fontWeight: 500 }}>— {historyMatch.clips_count} clips</span>
                     </div>
                     <div style={{ fontSize: 11, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {historyMatch.title}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/analyze/db/${historyMatch.id}`)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "7px",
-                      background: "rgba(34, 211, 238, 0.9)",
-                      border: "none",
-                      color: "#001a22",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Ver clips guardados
-                  </button>
-                  <button
-                    type="button"
-                    style={{
-                      padding: "6px 11px",
-                      borderRadius: "7px",
-                      background: "rgba(255,255,255,0.08)",
-                      border: "1px solid rgba(255,255,255,0.2)",
-                      color: "#e2e8f0",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      whiteSpace: "nowrap",
-                    }}
-                    onClick={() => triggerAnalysis(true)}
-                    disabled={loading}
-                    title="Forzar un análisis nuevo completo con IA"
-                  >
-                    <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-                    <span>Re-analizar de nuevo</span>
-                  </button>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/analyze/db/${historyMatch.id}`)}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "7px",
+                        background: "rgba(34, 211, 238, 0.9)",
+                        border: "none",
+                        color: "#001a22",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Ver clips guardados
+                    </button>
+                    <button
+                      type="button"
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "7px",
+                        background: "linear-gradient(135deg, rgba(124, 58, 237, 0.8), rgba(6, 182, 212, 0.8))",
+                        border: "none",
+                        color: "#ffffff",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        whiteSpace: "nowrap",
+                      }}
+                      onClick={() => triggerAnalysis(true)}
+                      disabled={loading}
+                      title={`Crear un nuevo análisis independiente con ${provider.toUpperCase()}`}
+                    >
+                      <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+                      <span>Analizar con {provider.toUpperCase()} (Crear nuevo)</span>
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -490,8 +523,35 @@ export default function HomePage() {
                   </span>
                 </div>
 
-                {/* 4. Cliente o Marca (Select o Registrar Nuevo) */}
+                {/* 4. Modelo de Análisis IA (LLM) */}
                 <div className={styles.selectBox}>
+                  <div className={styles.selectHeader}>
+                    <Bot size={12} strokeWidth={2} />
+                    <span>Modelo de Análisis IA</span>
+                  </div>
+                  <select
+                    className={styles.selectNative}
+                    value={provider}
+                    onChange={(e) => {
+                      const val = e.target.value as "groq" | "gemini";
+                      setProvider(val);
+                      try {
+                        localStorage.setItem("clypfast_preferred_provider", val);
+                      } catch {}
+                    }}
+                    disabled={loading}
+                    id="provider-select"
+                  >
+                    <option value="groq">⚡ Groq (Llama / Compound - Recomendado)</option>
+                    <option value="gemini">✨ Google Gemini (3.5 Flash)</option>
+                  </select>
+                  <span className={styles.chevronIcon}>
+                    <ChevronDown size={13} strokeWidth={2} />
+                  </span>
+                </div>
+
+                {/* 5. Cliente o Marca (Select o Registrar Nuevo) */}
+                <div className={styles.selectBox} style={{ gridColumn: "1 / -1" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div className={styles.selectHeader}>
                       <Tag size={12} strokeWidth={2} />

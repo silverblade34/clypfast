@@ -21,13 +21,17 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
 
-    # Safe migration: add channel column to video table if missing
+    # Safe migration: add columns to video table if missing
     try:
         with engine.connect() as conn:
             cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(video)").fetchall()]
             if "channel" not in cols:
                 conn.exec_driver_sql("ALTER TABLE video ADD COLUMN channel VARCHAR")
-                conn.commit()
+            if "provider" not in cols:
+                conn.exec_driver_sql("ALTER TABLE video ADD COLUMN provider VARCHAR")
+            if "llm_model" not in cols:
+                conn.exec_driver_sql("ALTER TABLE video ADD COLUMN llm_model VARCHAR")
+            conn.commit()
     except Exception:
         pass
 

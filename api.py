@@ -67,7 +67,7 @@ class AnalyzeRequest(BaseModel):
     whisper_model: str = "small"
     max_clips: int = 12
     language: str | None = None
-    provider: str = "gemini"
+    provider: str = "groq"
     cliente: str | None = None
     content_type: str = "general"
 
@@ -373,6 +373,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     channel=video_channel,
                     title=video_title,
                     duration_seconds=duration,
+                    provider=req.provider,
+                    llm_model=model_name,
                 )
                 db_session.add(db_vid)
                 db_session.commit()
@@ -412,6 +414,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
         res_dict["video_db_id"] = db_video_id
         res_dict["video_title"] = video_title
         res_dict["video_channel"] = video_channel
+        res_dict["provider"] = req.provider
+        res_dict["llm_model"] = model_name
 
         _update_job(
             job_id,
@@ -747,6 +751,8 @@ async def lookup_video_by_url(url: str) -> dict[str, Any]:
                     "id": v.id,
                     "title": v.title,
                     "channel": v.channel,
+                    "provider": v.provider,
+                    "llm_model": v.llm_model,
                     "source_url": v.source_url,
                     "duration_seconds": v.duration_seconds,
                     "created_at": v.created_at.isoformat(),
@@ -771,6 +777,8 @@ async def get_video(video_id: int) -> dict[str, Any]:
             "id": v.id,
             "title": v.title,
             "channel": v.channel,
+            "provider": v.provider,
+            "llm_model": v.llm_model,
             "source_url": v.source_url,
             "duration_seconds": v.duration_seconds,
             "cliente": v.cliente,
@@ -867,6 +875,8 @@ async def filter_clips(status: str | None = None, cliente: str | None = None) ->
                 c_dict["cliente"] = c.video.cliente
                 c_dict["video_title"] = c.video.title
                 c_dict["channel"] = c.video.channel
+                c_dict["provider"] = c.video.provider
+                c_dict["llm_model"] = c.video.llm_model
             results.append(c_dict)
         return results
 

@@ -30,6 +30,8 @@ class Video(SQLModel, table=True):
     channel: Optional[str] = None
     title: Optional[str] = None
     duration_seconds: float = 0.0
+    provider: Optional[str] = None
+    llm_model: Optional[str] = None
     created_at: datetime = Field(default_factory=_utc_now)
 
     clips: List["Clip"] = Relationship(

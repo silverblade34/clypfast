@@ -369,6 +369,9 @@ def _deduplicate(clips: list[ClipCandidate], overlap_threshold: float = 0.5) -> 
         if not dominated:
             kept.append(candidate)
 
+    return kept
+
+
 MIN_CLIP_DURATION: float = 15.0
 MAX_CLIP_DURATION: float = 120.0
 

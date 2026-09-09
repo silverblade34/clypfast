@@ -14,6 +14,8 @@ interface VideoData {
   duration_seconds: number;
   created_at: string;
   clips_count: number;
+  provider?: string | null;
+  llm_model?: string | null;
   status_summary: {
     prospecto: number;
     subtitulado: number;
@@ -38,6 +40,8 @@ interface ClipData {
   video_title?: string;
   channel?: string;
   cliente?: string;
+  provider?: string | null;
+  llm_model?: string | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -63,6 +67,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [selectedClient, setSelectedClient] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedModel, setSelectedModel] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<"videos" | "clips">("videos");
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
@@ -134,6 +139,23 @@ export default function HistoryPage() {
     (acc, v) => acc + (v.status_summary?.publicado || 0),
     0
   );
+
+  const filteredVideos = videos.filter((v) => {
+    if (selectedClient !== "all" && v.cliente !== selectedClient) return false;
+    if (selectedModel !== "all") {
+      const prov = (v.provider || "gemini").toLowerCase();
+      if (prov !== selectedModel.toLowerCase()) return false;
+    }
+    return true;
+  });
+
+  const filteredClips = clips.filter((c) => {
+    if (selectedModel !== "all") {
+      const prov = (c.provider || "gemini").toLowerCase();
+      if (prov !== selectedModel.toLowerCase()) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="page-wrapper">
@@ -334,94 +356,145 @@ export default function HistoryPage() {
                   <option value="descartado">⚪ Descartado</option>
                 </select>
               </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 6 }}>
+                  Modelo IA:
+                </label>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    background: "rgba(255, 255, 255, 0.06)",
+                    color: "#fff",
+                    border: "1px solid var(--border)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="all">⚡ Groq + ✨ Gemini (Todos)</option>
+                  <option value="groq">⚡ Groq</option>
+                  <option value="gemini">✨ Gemini</option>
+                </select>
+              </div>
             </div>
           </div>
 
           {/* Tab 1: Videos View */}
           {activeTab === "videos" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {videos.length === 0 ? (
-                <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
-                  <span style={{ fontSize: 36 }}>📂</span>
-                  <h3 style={{ marginTop: 12, marginBottom: 6 }}>No hay videos guardados aún</h3>
-                  <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                    Inicia un análisis desde la página principal y se guardará automáticamente aquí.
-                  </p>
-                </div>
-              ) : (
-                videos.map((vid) => (
-                  <div
-                    key={vid.id}
-                    className="glass-card"
-                    style={{
-                      padding: "20px 24px",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 20,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ flex: "1 1 420px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginBottom: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        {vid.channel && (
-                          <span
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              padding: "3px 9px",
-                              background: "rgba(34, 211, 238, 0.12)",
-                              color: "var(--cyan)",
-                              borderRadius: 6,
-                              border: "1px solid rgba(34, 211, 238, 0.25)",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 4,
-                            }}
-                          >
-                            📺 {vid.channel}
-                          </span>
-                        )}
-                        {vid.cliente && (
+                {filteredVideos.length === 0 ? (
+                  <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
+                    <span style={{ fontSize: 36 }}>📂</span>
+                    <h3 style={{ marginTop: 12, marginBottom: 6 }}>No hay videos que coincidan</h3>
+                    <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                      {videos.length === 0
+                        ? "Inicia un análisis desde la página principal y se guardará automáticamente aquí."
+                        : "Prueba seleccionando otro filtro de modelo o cliente."}
+                    </p>
+                  </div>
+                ) : (
+                  filteredVideos.map((vid) => (
+                    <div
+                      key={vid.id}
+                      className="glass-card"
+                      style={{
+                        padding: "20px 24px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 20,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ flex: "1 1 420px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            marginBottom: 8,
+                            flexWrap: "wrap",
+                          }}
+                        >
                           <span
                             style={{
                               fontSize: 11,
                               fontWeight: 700,
                               padding: "3px 8px",
-                              background: "rgba(167, 139, 250, 0.2)",
-                              color: "#a78bfa",
+                              background:
+                                (vid.provider || "gemini").toLowerCase() === "groq"
+                                  ? "rgba(249, 115, 22, 0.18)"
+                                  : "rgba(168, 85, 247, 0.18)",
+                              color:
+                                (vid.provider || "gemini").toLowerCase() === "groq"
+                                  ? "#fb923c"
+                                  : "#c084fc",
                               borderRadius: 6,
+                              border: `1px solid ${
+                                (vid.provider || "gemini").toLowerCase() === "groq"
+                                  ? "rgba(249, 115, 22, 0.35)"
+                                  : "rgba(168, 85, 247, 0.35)"
+                              }`,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
                             }}
                           >
-                            🏷️ {vid.cliente}
+                            {(vid.provider || "gemini").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
                           </span>
-                        )}
-                      </div>
 
-                      <div style={{ marginBottom: 8 }}>
-                        <Link
-                          href={`/analyze/db/${vid.id}`}
-                          style={{
-                            fontSize: 15,
-                            fontWeight: 700,
-                            color: "#fff",
-                            textDecoration: "none",
-                            lineHeight: 1.4,
-                            display: "inline-block",
-                          }}
-                          title="Haz clic para entrar al panel de clips"
-                        >
-                          {vid.title || `Video #${vid.id}`}
-                        </Link>
-                      </div>
+                          {vid.channel && (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: "3px 9px",
+                                background: "rgba(34, 211, 238, 0.12)",
+                                color: "var(--cyan)",
+                                borderRadius: 6,
+                                border: "1px solid rgba(34, 211, 238, 0.25)",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              📺 {vid.channel}
+                            </span>
+                          )}
+                          {vid.cliente && (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: "3px 8px",
+                                background: "rgba(167, 139, 250, 0.2)",
+                                color: "#a78bfa",
+                                borderRadius: 6,
+                              }}
+                            >
+                              🏷️ {vid.cliente}
+                            </span>
+                          )}
+                        </div>
+
+                        <div style={{ marginBottom: 8 }}>
+                          <Link
+                            href={`/analyze/db/${vid.id}`}
+                            style={{
+                              fontSize: 15,
+                              fontWeight: 700,
+                              color: "#fff",
+                              textDecoration: "none",
+                              lineHeight: 1.4,
+                              display: "inline-block",
+                            }}
+                            title="Haz clic para entrar al panel de clips"
+                          >
+                            {vid.title || `Video #${vid.id}`}
+                          </Link>
+                        </div>
 
                       <div
                         style={{
@@ -534,55 +607,82 @@ export default function HistoryPage() {
           {/* Tab 2: Detailed Clips View */}
           {activeTab === "clips" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {clips.length === 0 ? (
-                <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
-                  <span style={{ fontSize: 36 }}>🎯</span>
-                  <h3 style={{ marginTop: 12, marginBottom: 6 }}>No hay clips que coincidan</h3>
-                  <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                    Ajusta los filtros de cliente o estado para ver más resultados.
-                  </p>
-                </div>
-              ) : (
-                clips.map((c) => {
-                  const sMeta = STATUS_CONFIG[c.status] || STATUS_CONFIG.prospecto;
-                  const fullCopy = `${c.caption || c.title}\n\n${c.hashtags || ""}`.trim();
+                {filteredClips.length === 0 ? (
+                  <div className="glass-card" style={{ padding: 40, textAlign: "center" }}>
+                    <span style={{ fontSize: 36 }}>🎯</span>
+                    <h3 style={{ marginTop: 12, marginBottom: 6 }}>No hay clips que coincidan</h3>
+                    <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                      Ajusta los filtros de cliente, estado o modelo para ver más resultados.
+                    </p>
+                  </div>
+                ) : (
+                  filteredClips.map((c) => {
+                    const sMeta = STATUS_CONFIG[c.status] || STATUS_CONFIG.prospecto;
+                    const fullCopy = `${c.caption || c.title}\n\n${c.hashtags || ""}`.trim();
 
-                  return (
-                    <div
-                      key={c.id}
-                      className="glass-card"
-                      style={{
-                        padding: "18px 20px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 10,
-                      }}
-                    >
+                    return (
                       <div
+                        key={c.id}
+                        className="glass-card"
                         style={{
+                          padding: "18px 20px",
                           display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "flex-start",
-                          gap: 12,
+                          flexDirection: "column",
+                          gap: 10,
                         }}
                       >
-                        <div>
-                          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                            {c.cliente && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
                               <span
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 700,
-                                  padding: "2px 8px",
-                                  background: "rgba(167, 139, 250, 0.15)",
-                                  color: "#a78bfa",
+                                  padding: "2px 7px",
+                                  background:
+                                    (c.provider || "gemini").toLowerCase() === "groq"
+                                      ? "rgba(249, 115, 22, 0.18)"
+                                      : "rgba(168, 85, 247, 0.18)",
+                                  color:
+                                    (c.provider || "gemini").toLowerCase() === "groq"
+                                      ? "#fb923c"
+                                      : "#c084fc",
                                   borderRadius: 4,
+                                  border: `1px solid ${
+                                    (c.provider || "gemini").toLowerCase() === "groq"
+                                      ? "rgba(249, 115, 22, 0.3)"
+                                      : "rgba(168, 85, 247, 0.3)"
+                                  }`,
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 3,
                                 }}
                               >
-                                {c.cliente}
+                                {(c.provider || "gemini").toLowerCase() === "groq" ? "⚡ Groq" : "✨ Gemini"}
                               </span>
-                            )}
-                            <select
+
+                              {c.cliente && (
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    padding: "2px 8px",
+                                    background: "rgba(167, 139, 250, 0.15)",
+                                    color: "#a78bfa",
+                                    borderRadius: 4,
+                                  }}
+                                >
+                                  {c.cliente}
+                                </span>
+                              )}
+                              <select
                               value={c.status}
                               onChange={(e) => handleUpdateStatus(c.id, e.target.value)}
                               style={{
