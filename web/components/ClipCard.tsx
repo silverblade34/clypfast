@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ExternalLink, Sliders, X } from "lucide-react";
+import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ExternalLink, Sliders, X, Share2 } from "lucide-react";
 import styles from "./ClipCard.module.css";
 import ClipCustomizerModal from "./ClipCustomizerModal";
 
@@ -16,6 +16,10 @@ export interface Clip {
   status?: string;
   caption?: string;
   hashtags?: string | string[];
+  video_title?: string;
+  video_channel?: string;
+  channel?: string;
+  video_source_url?: string;
 }
 
 interface Props {
@@ -25,6 +29,95 @@ interface Props {
   onJump: (startSeconds: number) => void;
   videoId?: string;
   videoUrl?: string;
+  videoTitle?: string;
+  videoChannel?: string;
+}
+
+export function buildPostDescription({
+  caption,
+  reason,
+  title,
+  videoTitle,
+  videoChannel,
+  videoUrl,
+  videoId,
+  startSec,
+  hashtags,
+}: {
+  caption?: string;
+  reason?: string;
+  title?: string;
+  videoTitle?: string;
+  videoChannel?: string;
+  videoUrl?: string;
+  videoId?: string;
+  startSec?: number;
+  hashtags?: string[] | string;
+}): string {
+  const text = (caption || title || "").trim();
+  const lower = text.toLowerCase();
+
+  const hasReflection = lower.includes("reflexión") || text.includes("💡");
+  const hasVideo = lower.includes("video:") || text.includes("📌");
+  const hasChannel = lower.includes("canal:") || text.includes("🎙");
+
+  const blocks: string[] = [];
+
+  // 1. Gancho principal (Hook)
+  if (text) {
+    blocks.push(text);
+  }
+
+  // 2. Pequeña reflexión (si no está ya integrada)
+  if (!hasReflection && reason) {
+    blocks.push(`💡 Reflexión: ${reason.trim()}`);
+  }
+
+  // 3. CTA si no tiene pregunta ni llamada
+  if (
+    !text.includes("?") &&
+    !text.includes("¿") &&
+    !lower.includes("opinas") &&
+    !text.includes("👇")
+  ) {
+    blocks.push("¿Qué opinas tú de esto? ¡Déjame tu punto de vista en los comentarios! 👇");
+  }
+
+  // 4. Mención de la fuente (Video y Canal)
+  const sourceLines: string[] = [];
+  if (!hasVideo && videoTitle) {
+    sourceLines.push(`📌 Video: ${videoTitle}`);
+  }
+  if (!hasChannel && videoChannel) {
+    sourceLines.push(`🎙 Canal: ${videoChannel}`);
+  }
+  if (videoId && startSec !== undefined) {
+    sourceLines.push(`🔗 https://youtu.be/${videoId}?t=${Math.floor(startSec)}`);
+  } else if (videoUrl && !text.includes("http")) {
+    sourceLines.push(`🔗 ${videoUrl}`);
+  }
+
+  if (sourceLines.length > 0) {
+    blocks.push(sourceLines.join("\n"));
+  }
+
+  // 5. Hashtags
+  if (hashtags) {
+    const tagList = Array.isArray(hashtags)
+      ? hashtags
+      : typeof hashtags === "string"
+      ? hashtags.split(/\s+/)
+      : [];
+    const formattedTags = tagList
+      .filter(Boolean)
+      .map((t) => (t.startsWith("#") ? t : `#${t}`))
+      .join(" ");
+    if (formattedTags && !text.includes(formattedTags)) {
+      blocks.push(formattedTags);
+    }
+  }
+
+  return blocks.join("\n\n").trim();
 }
 
 function formatTime(seconds: number): string {
@@ -110,7 +203,7 @@ function deriveTags(hashtags?: string | string[], title?: string, reason?: strin
   return tags.slice(0, 3);
 }
 
-export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl }: Props) {
+export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl, videoTitle, videoChannel }: Props) {
   const router = useRouter();
   const [startSec, setStartSec] = useState(clip.start_seconds);
   const [endSec, setEndSec] = useState(clip.end_seconds);
@@ -137,6 +230,8 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   const tags = deriveTags(clip.hashtags, clip.title, clip.reason);
 
   const effectiveVideoId = videoId || extractYouTubeId(videoUrl);
+  const effectiveVideoTitle = videoTitle || clip.video_title;
+  const effectiveChannel = videoChannel || clip.video_channel || clip.channel;
 
   // Direct YouTube CDN snapshot (0% server load, instant 20ms load from Google Edge CDN)
   const thumbIndex = (index % 3) + 1;
@@ -155,9 +250,30 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
     setEndTimeInput(formatTime(endSec));
   }, [startSec, endSec]);
 
-  // Extract clean hook quote from caption
-  const rawCaption = clip.caption ? clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim() : "";
-  const quoteText = rawCaption || (clip.title ? `“${clip.title}”` : "");
+  // Extract clean hook quote, reflection and attribution
+  let quoteText = "";
+  let reflectionText = clip.reason || "";
+
+  if (clip.caption) {
+    const cleanCap = clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim();
+    const reflectionMatch = cleanCap.match(/(?:💡\s*)?[Rr]eflexi[oó]n:\s*([^📌🎙\n]+(?:\n[^📌🎙\n]+)*)/);
+    if (reflectionMatch) {
+      reflectionText = reflectionMatch[1].trim();
+      const beforeRef = cleanCap.split(/(?:💡\s*)?[Rr]eflexi[oó]n:/)[0].trim();
+      quoteText = beforeRef;
+    } else {
+      const paragraphs = cleanCap.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+      const nonAttribution = paragraphs.filter((p) => !p.startsWith("📌") && !p.startsWith("🎙"));
+      if (nonAttribution.length >= 2 && !clip.reason) {
+        quoteText = nonAttribution[0];
+        reflectionText = nonAttribution.slice(1).join("\n\n");
+      } else {
+        quoteText = nonAttribution[0] || cleanCap;
+      }
+    }
+  } else if (clip.title) {
+    quoteText = `“${clip.title}”`;
+  }
 
   // Close more menu on outside click
   useEffect(() => {
@@ -203,10 +319,22 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
     setIsEditingTime(false);
   };
 
+  const getFullPostCopy = () => {
+    return buildPostDescription({
+      caption: clip.caption,
+      reason: clip.reason,
+      title: clip.title,
+      videoTitle: effectiveVideoTitle,
+      videoChannel: effectiveChannel,
+      videoUrl,
+      videoId: effectiveVideoId ?? undefined,
+      startSec,
+      hashtags: clip.hashtags,
+    });
+  };
+
   const handleCopyText = () => {
-    const fullText = `${clip.caption || clip.title}\n\n${
-      Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags || ""
-    }`.trim();
+    const fullText = getFullPostCopy();
     navigator.clipboard.writeText(fullText);
     setCopiedCopy(true);
     setTimeout(() => setCopiedCopy(false), 2500);
@@ -299,11 +427,28 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
               </p>
             )}
 
-            {/* Reason / Explanation */}
-            {clip.reason && (
+            {/* Reflection / Takeaway */}
+            {reflectionText && (
               <p className={styles.reasonText}>
-                {clip.reason}
+                <span className={styles.reflectionTag}>💡 Reflexión</span>
+                {reflectionText}
               </p>
+            )}
+
+            {/* Source Video & Channel attribution */}
+            {(effectiveVideoTitle || effectiveChannel) && (
+              <div className={styles.sourceAttribution}>
+                {effectiveVideoTitle && (
+                  <span className={styles.sourceItem} title={`Video original: ${effectiveVideoTitle}`}>
+                    <span className={styles.sourceIcon}>📌</span> {effectiveVideoTitle}
+                  </span>
+                )}
+                {effectiveChannel && (
+                  <span className={styles.sourceItem} title={`Canal / Creador: ${effectiveChannel}`}>
+                    <span className={styles.sourceIcon}>🎙</span> {effectiveChannel}
+                  </span>
+                )}
+              </div>
             )}
 
             {/* Action Buttons Row */}
@@ -394,12 +539,23 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                       type="button"
                       className={styles.dropdownItem}
                       onClick={() => {
+                        setShowCopyBox(!showCopyBox);
+                        setShowMoreMenu(false);
+                      }}
+                    >
+                      <Share2 size={12} />
+                      <span>{showCopyBox ? "Ocultar descripción" : "Ver descripción para post"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.dropdownItem}
+                      onClick={() => {
                         handleCopyText();
                         setShowMoreMenu(false);
                       }}
                     >
                       <Copy size={12} />
-                      <span>Copiar copy y hashtags</span>
+                      <span>Copiar post (con reflexión y fuente)</span>
                     </button>
                     {effectiveVideoId && (
                       <button
@@ -593,24 +749,22 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
         )}
 
         {/* Social Copy Box */}
-        {(clip.caption || clip.hashtags) && showCopyBox && (
+        {showCopyBox && (
           <div className={styles.socialCopyBox}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                {clip.caption && <p className={styles.quoteBox}>"{clip.caption}"</p>}
-                {clip.hashtags && (
-                  <p style={{ color: "#a78bfa", marginTop: 4, fontSize: 11 }}>
-                    {Array.isArray(clip.hashtags) ? clip.hashtags.join(" ") : clip.hashtags}
-                  </p>
-                )}
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                  <span>📱</span> Descripción sugerida para redes sociales:
+                </div>
+                <pre className={styles.copyPreBlock}>{getFullPostCopy()}</pre>
               </div>
               <button
                 type="button"
                 className={styles.actionBtn}
                 onClick={handleCopyText}
-                style={{ fontSize: 11, padding: "4px 8px" }}
+                style={{ fontSize: 11, padding: "6px 12px", whiteSpace: "nowrap", alignSelf: "flex-start" }}
               >
-                {copiedCopy ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Copiar</>}
+                {copiedCopy ? <><Check size={11} color="#4ade80" /> Copiado</> : <><Copy size={11} /> Copiar texto</>}
               </button>
             </div>
           </div>

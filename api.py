@@ -319,6 +319,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             max_clips=req.max_clips,
             content_type=req.content_type,
             progress_callback=on_chunk,
+            video_title=video_title,
+            video_channel=video_channel,
         )
 
         _update_job(
@@ -797,13 +799,25 @@ async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
     """Get all clips belonging to a video."""
     from sqlmodel import Session, col, select
     from clipfinder.db import engine
-    from clipfinder.models import Clip
+    from clipfinder.models import Clip, Video
 
     with Session(engine) as session:
+        v = session.get(Video, video_id)
+        v_title = v.title if v else None
+        v_channel = v.channel if v else None
+        v_url = (v.source_url or v.source_path) if v else None
+
         clips = session.exec(
             select(Clip).where(Clip.video_id == video_id).order_by(col(Clip.score).desc())
         ).all()
-        return [c.model_dump() for c in clips]
+        results: list[dict[str, Any]] = []
+        for c in clips:
+            d = c.model_dump()
+            d["video_title"] = v_title
+            d["video_channel"] = v_channel
+            d["video_source_url"] = v_url
+            results.append(d)
+        return results
 
 
 @app.get("/videos/{video_id}/transcript")

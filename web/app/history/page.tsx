@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { buildPostDescription } from "@/components/ClipCard";
 
 interface VideoData {
   id: number;
@@ -618,7 +619,16 @@ export default function HistoryPage() {
                 ) : (
                   filteredClips.map((c) => {
                     const sMeta = STATUS_CONFIG[c.status] || STATUS_CONFIG.prospecto;
-                    const fullCopy = `${c.caption || c.title}\n\n${c.hashtags || ""}`.trim();
+                    const fullCopy = buildPostDescription({
+                      caption: c.caption || undefined,
+                      reason: c.reason,
+                      title: c.title,
+                      videoTitle: c.video_title,
+                      videoChannel: c.channel,
+                      videoUrl: c.video_source,
+                      startSec: c.start_seconds,
+                      hashtags: c.hashtags || undefined,
+                    });
 
                     return (
                       <div

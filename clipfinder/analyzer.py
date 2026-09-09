@@ -95,6 +95,10 @@ USER_PROMPT_TEMPLATE = """\
 Analiza la siguiente transcripción con timestamps y detecta exactamente {max_clips} momentos \
 con mayor potencial viral para TikTok/Reels/Shorts.
 
+DATOS DEL VIDEO DE ORIGEN:
+- Título del video: {video_title}
+- Canal / Creador: {video_channel}
+
 {content_criteria}
 
 EVITAR: transiciones vagas, introducciones genéricas, despedidas, silencio o relleno sin sustancia.
@@ -111,13 +115,23 @@ REGLA CRÍTICA DE TIMESTAMPS (OBLIGATORIA):
 - Puedes escribir "start_seconds" y "end_seconds" en formato "MM:SS" (por ejemplo "34:15" y "35:02") o en segundos totales (ej. 2055 y 2102).
 - ESTÁ ESTRICTAMENTE PROHIBIDO usar tiempos relativos (como "00:15" o "00:31" cuando el texto dice "[34:15]"). Debe ser el timestamp real del video completo.
 
+REGLA CRÍTICA PARA LA DESCRIPCIÓN DEL POST ("caption"):
+El campo "caption" es la descripción completa del post lista para publicar en redes sociales (TikTok / Instagram Reels / YouTube Shorts / LinkedIn).
+DEBE seguir obligatoriamente esta estructura de 4 bloques:
+1. Gancho inicial: 1 frase llamativa o intrigante en primera línea que atrape de inmediato.
+2. Pequeña reflexión: 1 o 2 oraciones con una reflexión profunda, lección clave o moraleja sobre este momento (iniciando con "💡 Reflexión: ...").
+3. Pregunta o llamado a la acción (CTA) para invitar a la audiencia a comentar.
+4. Mención obligatoria de la fuente:
+   📌 Video: {video_title}
+   🎙 Canal: {video_channel}
+
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
-{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Copy sugerido para TikTok/Reels con gancho y llamada a la acción", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
+{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Gancho inicial\\n\\n💡 Reflexión: ...\\n\\n¿Qué opinas? ¡Comenta abajo! 👇\\n\\n📌 Video: {video_title}\\n🎙 Canal: {video_channel}", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
 
 - "title": máximo 60 caracteres, en el mismo idioma del video
 - "reason": 1-2 oraciones explicando el potencial viral específico
 - "score": entero del 1 al 10 (10 = viral garantizado)
-- "caption": 1-2 oraciones con copy atractivo y llamado a la acción para redes sociales
+- "caption": descripción completa estructurada con gancho, pequeña reflexión, CTA y mención del video y canal
 - "hashtags": lista de 5 a 8 hashtags altamente relevantes para el clip
 
 Transcripción:
@@ -210,17 +224,21 @@ def _extract_json(text: str) -> dict:
 def _generate_fallback_clips(
     segments: list[TranscriptSegment],
     target_count: int = 3,
+    video_title: str | None = None,
+    video_channel: str | None = None,
 ) -> list[ClipCandidate]:
     """
-    Generate fallback clips when LLM detection returns 0 results.
-    Picks continuous chunks of 30-60 seconds from the transcript so the user
-    never receives an empty list if speech content was present.
+    Generate evenly spaced fallback clips from transcript if the LLM produces 0 clips.
+    Guarantees the system never returns an empty list if transcript segments exist.
     """
     if not segments:
         return []
 
+    v_title = (video_title or "Video original").strip()
+    v_chan = (video_channel or "Canal de origen").strip()
+
     total_duration = segments[-1].end - segments[0].start
-    if total_duration < 20.0:
+    if total_duration < 15.0:
         return [
             ClipCandidate(
                 start_seconds=segments[0].start,
@@ -228,7 +246,7 @@ def _generate_fallback_clips(
                 title="Momento Destacado (Completo)",
                 reason="Segmento principal detectado del video",
                 score=6,
-                caption="Lo más destacado de esta sesión 🎬🔥 #viral #clip",
+                caption=f"Lo más destacado de esta sesión 🎬🔥\n\n💡 Reflexión: Una lección clave para aplicar de inmediato.\n\n¿Qué opinas? ¡Comenta abajo! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
                 hashtags=["#destacado", "#clip", "#viral", "#contenido", "#resumen"],
             )
         ]
@@ -262,14 +280,15 @@ def _generate_fallback_clips(
         if not title:
             title = f"Momento Destacado #{idx}"
 
+        reason = "Momento sugerido automáticamente a partir de la transcripción"
         fallbacks.append(
             ClipCandidate(
                 start_seconds=round(start_s, 2),
                 end_seconds=round(end_s, 2),
                 title=title,
-                reason="Momento sugerido automáticamente a partir de la transcripción",
+                reason=reason,
                 score=6,
-                caption=f"{title} 🔥 ¿Qué opinas? ¡Déjalo en los comentarios!",
+                caption=f"{title} 🔥\n\n💡 Reflexión: Una perspectiva clave sobre este tema.\n\n¿Qué opinas? ¡Déjalo en los comentarios! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
                 hashtags=["#destacado", "#clip", "#viral", "#video", "#tendencia"],
             )
         )
@@ -286,6 +305,8 @@ def _call_groq(
     model: str,
     api_key: str,
     content_type: str = "general",
+    video_title: str = "Video original",
+    video_channel: str = "Canal de origen",
 ) -> list[ClipCandidate]:
     """Call the Groq API and parse the response."""
     from groq import Groq
@@ -296,6 +317,8 @@ def _call_groq(
         max_clips=max_clips,
         content_criteria=criteria,
         transcript=transcript,
+        video_title=video_title or "Video original",
+        video_channel=video_channel or "Canal de origen",
     )
 
     response = client.chat.completions.create(
@@ -319,12 +342,14 @@ def _call_gemini(
     model: str,
     api_key: str,
     content_type: str = "general",
+    video_title: str = "Video original",
+    video_channel: str = "Canal de origen",
 ) -> list[ClipCandidate]:
     """Call the Google Gemini API and parse the response."""
     import google.generativeai as genai
 
-    genai.configure(api_key=api_key)
-    gem = genai.GenerativeModel(
+    genai.configure(api_key=api_key)  # pyright: ignore[reportPrivateImportUsage]
+    gem = genai.GenerativeModel(  # pyright: ignore[reportPrivateImportUsage]
         model_name=model,
         system_instruction=SYSTEM_PROMPT,
     )
@@ -334,6 +359,8 @@ def _call_gemini(
         max_clips=max_clips,
         content_criteria=criteria,
         transcript=transcript,
+        video_title=video_title or "Video original",
+        video_channel=video_channel or "Canal de origen",
     )
 
     response = gem.generate_content(
@@ -420,6 +447,37 @@ def _validate_and_sanitize_clips(
     return sanitized
 
 
+def ensure_caption_attribution(
+    clip: ClipCandidate,
+    video_title: str | None = None,
+    video_channel: str | None = None,
+) -> None:
+    """Ensure that the clip's caption has a reflection and mentions the source video and channel."""
+    text = (clip.caption or clip.title or "").strip()
+    has_reflection = "reflexión" in text.lower() or "💡" in text
+    has_video = "📌" in text or "video:" in text.lower()
+    has_channel = "🎙" in text or "canal:" in text.lower()
+
+    blocks: list[str] = [text] if text else []
+
+    if not has_reflection and clip.reason:
+        blocks.append(f"💡 Reflexión: {clip.reason.strip()}")
+
+    if not text or (not text.endswith("?") and not text.endswith("👇") and "opinas" not in text.lower() and "¿" not in text):
+        blocks.append("¿Qué opinas tú de esto? ¡Déjamelo saber en los comentarios! 👇")
+
+    source_lines: list[str] = []
+    if not has_video and video_title:
+        source_lines.append(f"📌 Video: {video_title.strip()}")
+    if not has_channel and video_channel:
+        source_lines.append(f"🎙 Canal: {video_channel.strip()}")
+
+    if source_lines:
+        blocks.append("\n".join(source_lines))
+
+    clip.caption = "\n\n".join(blocks).strip()
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 ProgressCallback = Callable[[int, int, str | None], None]
@@ -433,6 +491,8 @@ def analyze_segments(
     max_clips: int = 12,
     content_type: str = "general",
     progress_callback: ProgressCallback | None = None,
+    video_title: str | None = None,
+    video_channel: str | None = None,
 ) -> list[ClipCandidate]:
     """
     Analyze transcript segments and return the top viral clip candidates.
@@ -445,6 +505,8 @@ def analyze_segments(
         max_clips: Maximum clips to return in total.
         content_type: Target niche ('politica', 'entrevista', 'streaming', 'educativo', 'comedia', 'vlog', 'general').
         progress_callback: Optional fn(current_chunk, total_chunks, error_msg).
+        video_title: Source video title to provide context and attribution.
+        video_channel: Source video channel name to provide context and attribution.
 
     Returns:
         List of ClipCandidate sorted by score descending, deduplicated.
@@ -464,6 +526,9 @@ def analyze_segments(
     total = len(chunks)
     clips_per_chunk = max(3, (max_clips * 2) // total)  # ask for 2x per chunk, filter later
 
+    v_title = (video_title or "Video original").strip()
+    v_chan = (video_channel or "Canal de origen").strip()
+
     all_clips: list[ClipCandidate] = []
 
     for i, chunk in enumerate(chunks, 1):
@@ -480,6 +545,8 @@ def analyze_segments(
                 model,
                 api_key,
                 content_type=content_type,
+                video_title=v_title,
+                video_channel=v_chan,
             )
 
             # Reconcile any relative timestamps from LLM:
@@ -522,6 +589,15 @@ def analyze_segments(
 
     # Fallback guarantee: Never return 0 clips if transcript segments exist
     if not all_clips and segments:
-        all_clips = _generate_fallback_clips(segments, target_count=min(3, max_clips))
+        all_clips = _generate_fallback_clips(
+            segments,
+            target_count=min(3, max_clips),
+            video_title=v_title,
+            video_channel=v_chan,
+        )
+
+    # Ensure all clip captions have the complete 4-part post description
+    for c in all_clips:
+        ensure_caption_attribution(c, video_title=video_title, video_channel=video_channel)
 
     return all_clips[:max_clips]

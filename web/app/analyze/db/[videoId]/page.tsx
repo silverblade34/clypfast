@@ -511,6 +511,8 @@ export default function DbAnalyzePage({
                         onJump={(s) => handleJump(s, i)}
                         videoId={youtubeVideoId ?? undefined}
                         videoUrl={video.source_url ?? undefined}
+                        videoTitle={video.title}
+                        videoChannel={video.channel ?? undefined}
                       />
                     ))}
                   </div>

@@ -25,6 +25,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import styles from "./page.module.css";
+import { buildPostDescription } from "@/components/ClipCard";
 
 /* ─── Tipos ─────────────────────────────────────────────────── */
 
@@ -149,7 +150,17 @@ function EditorContent() {
           }
           if (data.clip.start_seconds != null) setStartSec(data.clip.start_seconds);
           if (data.clip.end_seconds != null) setEndSec(data.clip.end_seconds);
-          if (data.clip.caption) setCaption(data.clip.caption);
+          const fullCap = buildPostDescription({
+            caption: data.clip.caption,
+            reason: data.clip.reason,
+            title: data.clip.title,
+            videoTitle: data.clip.video_title,
+            videoChannel: data.clip.video_channel,
+            videoId: data.videoId,
+            videoUrl: data.videoUrl,
+            startSec: data.clip.start_seconds,
+          });
+          setCaption(fullCap || data.clip.caption || "");
           if (data.clip.hashtags) {
             setHashtags(
               Array.isArray(data.clip.hashtags)
@@ -178,7 +189,16 @@ function EditorContent() {
             setHookText(data.title);
             setStartSec(data.start_seconds);
             setEndSec(data.end_seconds);
-            if (data.caption) setCaption(data.caption);
+            const fullCap = buildPostDescription({
+              caption: data.caption,
+              reason: data.reason,
+              title: data.title,
+              videoTitle: data.video_title,
+              videoChannel: data.channel,
+              videoUrl: data.video_source,
+              startSec: data.start_seconds,
+            });
+            setCaption(fullCap || data.caption || "");
             if (data.hashtags) setHashtags(data.hashtags);
             if (data.video_source) setVideoUrl(data.video_source);
           }
@@ -293,7 +313,10 @@ function EditorContent() {
   };
 
   const handleCopyText = () => {
-    const full = `${caption || title}\n\n${hashtags}`.trim();
+    let full = (caption || title || "").trim();
+    if (hashtags && !full.includes(hashtags)) {
+      full = `${full}\n\n${hashtags}`.trim();
+    }
     navigator.clipboard.writeText(full);
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2500);

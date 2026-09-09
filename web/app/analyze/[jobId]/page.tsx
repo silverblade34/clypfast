@@ -52,6 +52,8 @@ interface JobData {
   transcribe_segs?: number;
   transcription_method_used?: "youtube_subs" | "groq" | "local" | null;
   url: string;
+  video_title?: string;
+  video_channel?: string;
   result: {
     video_source: string;
     duration_seconds: number;
@@ -552,6 +554,8 @@ export default function AnalyzePage({
                         onJump={(s) => handleJump(s, idx)}
                         videoId={videoId ?? undefined}
                         videoUrl={videoUrl}
+                        videoTitle={job?.video_title}
+                        videoChannel={job?.video_channel}
                       />
                     ))}
                   </div>
