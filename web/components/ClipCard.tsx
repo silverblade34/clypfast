@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ChevronDown } from "lucide-react";
 import styles from "./ClipCard.module.css";
+import ClipCustomizerModal from "./ClipCustomizerModal";
 
 export interface Clip {
   id?: number;
@@ -29,9 +31,7 @@ function formatTime(seconds: number): string {
   const s = Math.floor(seconds % 60);
   const h = Math.floor(m / 60);
   if (h > 0) {
-    return `${h.toString().padStart(2, "0")}:${(m % 60)
-      .toString()
-      .padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    return `${h.toString().padStart(2, "0")}:${(m % 60).toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   }
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
@@ -42,79 +42,87 @@ function getScoreClass(score: number): string {
   return "low";
 }
 
-function getScoreEmoji(score: number): string {
+function getScoreIcon(score: number): string {
   if (score >= 9) return "🔥";
   if (score >= 7) return "⚡";
   return "✨";
 }
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  prospecto: { label: "Prospecto", color: "#94a3b8", bg: "rgba(148, 163, 184, 0.12)" },
-  enfoque_generado: { label: "9:16 Listo", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.15)" },
-  subtitulado: { label: "Subtitulado", color: "#a78bfa", bg: "rgba(167, 139, 250, 0.15)" },
-  en_revision: { label: "En Revisión", color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)" },
-  publicado: { label: "Publicado", color: "#22c55e", bg: "rgba(34, 197, 94, 0.15)" },
-  descartado: { label: "Descartado", color: "#64748b", bg: "rgba(100, 116, 139, 0.12)" },
+/**
+ * Deriva tags de contexto a partir de los hashtags del clip.
+ * Toma los primeros 3 hashtags, limpia el # y capitaliza.
+ * Si no hay hashtags, devuelve un array vacío.
+ */
+function deriveTags(hashtags?: string): string[] {
+  if (!hashtags) return [];
+  return hashtags
+    .split(/[\s,]+/)
+    .filter((t) => t.startsWith("#"))
+    .slice(0, 3)
+    .map((t) => t.replace(/^#/, "").replace(/([A-Z])/g, " $1").trim());
+}
+
+const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
+  prospecto:        { label: "Prospecto",   color: "#64748b", dot: "#475569" },
+  enfoque_generado: { label: "9:16 Listo",  color: "#38bdf8", dot: "#38bdf8" },
+  subtitulado:      { label: "Subtitulado", color: "#a78bfa", dot: "#a78bfa" },
+  en_revision:      { label: "En Revisión", color: "#f59e0b", dot: "#f59e0b" },
+  publicado:        { label: "Publicado",   color: "#22c55e", dot: "#22c55e" },
+  descartado:       { label: "Descartado",  color: "#475569", dot: "#334155" },
 };
 
-export default function ClipCard({
-  clip,
-  index,
-  isActive,
-  onJump,
-  videoId,
-  videoUrl,
-}: Props) {
+export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl }: Props) {
   const [startSec, setStartSec] = useState(clip.start_seconds);
-  const [endSec, setEndSec] = useState(clip.end_seconds);
-  const [status, setStatus] = useState(clip.status || "prospecto");
+  const [endSec, setEndSec]     = useState(clip.end_seconds);
+  const [status, setStatus]     = useState(clip.status || "prospecto");
+
   const [isEditingTime, setIsEditingTime] = useState(false);
-  const [isSavingTime, setIsSavingTime] = useState(false);
+  const [isSavingTime,  setIsSavingTime]  = useState(false);
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [showCopyBox, setShowCopyBox] = useState(false);
 
-  // Subtitle options
-  const [subtitleTheme, setSubtitleTheme] = useState<"hormozi" | "minimal" | "cyberpunk" | "none">("hormozi");
-  const [includeHookTitle, setIncludeHookTitle] = useState(true);
-  const [normalizeAudio, setNormalizeAudio] = useState(true);
+  // Modal personalización (Fase 2)
+  const [showCustomizer, setShowCustomizer] = useState(false);
+  const [customizerMode, setCustomizerMode] = useState<"smart_vertical" | "vertical_blur" | "original" | "split_screen">("smart_vertical");
 
-  // Menu & render states
-  const [showMenu, setShowMenu] = useState(false);
-  const [isRendering, setIsRendering] = useState(false);
-  const [renderProgress, setRenderProgress] = useState(0);
-  const [renderLabel, setRenderLabel] = useState("");
-  const [renderSuccess, setRenderSuccess] = useState(false);
-  const [renderError, setRenderError] = useState("");
+  // Feedback
+  const [copiedCopy, setCopiedCopy]     = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
 
-  // Copy feedback
-  const [copiedCopy, setCopiedCopy] = useState(false);
+  const statusRef  = useRef<HTMLDivElement>(null);
+  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const menuRef = useRef<HTMLDivElement>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const duration = Math.round(endSec - startSec);
+  const duration   = Math.round(endSec - startSec);
   const scoreClass = getScoreClass(clip.score);
+  const tags       = deriveTags(clip.hashtags);
+  const statusMeta = STATUS_CONFIG[status] || STATUS_CONFIG.prospecto;
 
+  // Thumbnail YouTube: usa la imagen del video (no exactamente el timestamp, pero identifica el video)
+  const thumbSrc = videoId
+    ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
+    : null;
+
+  // Cerrar status menu al click fuera
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowMenu(false);
+    if (!showStatusMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (statusRef.current && !statusRef.current.contains(e.target as Node)) {
+        setShowStatusMenu(false);
       }
-    }
-    if (showMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showMenu]);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showStatusMenu]);
 
   useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  // ── Handlers ─────────────────────────────────────────────────
 
   const handleStatusChange = async (newStatus: string) => {
     setStatus(newStatus);
+    setShowStatusMenu(false);
     if (!clip.id) return;
     try {
       await fetch(`/api/clips/${clip.id}`, {
@@ -122,9 +130,7 @@ export default function ClipCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   };
 
   const handleSaveTimes = async () => {
@@ -137,186 +143,150 @@ export default function ClipCard({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ start_seconds: startSec, end_seconds: endSec }),
         });
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     }
     setIsSavingTime(false);
     setIsEditingTime(false);
   };
 
   const handleCopyText = () => {
-    const fullText = `${clip.caption || clip.title}\n\n${clip.hashtags || ""}`.trim();
-    navigator.clipboard.writeText(fullText);
+    const text = `${clip.caption || clip.title}\n\n${clip.hashtags || ""}`.trim();
+    navigator.clipboard.writeText(text);
     setCopiedCopy(true);
     setTimeout(() => setCopiedCopy(false), 2500);
   };
 
-  const handleDownload = async (
-    mode: "smart_vertical" | "vertical_blur" | "original" | "split_screen"
-  ) => {
-    setShowMenu(false);
-    setRenderError("");
-    setIsRendering(true);
-    setRenderProgress(10);
-    setRenderLabel("Iniciando procesamiento...");
-
-    const targetUrl =
-      videoUrl ||
-      (videoId ? `https://www.youtube.com/watch?v=${videoId}` : "");
-
-    if (!targetUrl) {
-      setRenderError("No se encontró la URL del video.");
-      setIsRendering(false);
-      return;
-    }
-
-    try {
-      const res = await fetch("/api/clips/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: targetUrl,
-          clip_index: index,
-          start_seconds: startSec,
-          end_seconds: endSec,
-          title: clip.title,
-          mode: mode,
-          subtitle_theme: subtitleTheme,
-          include_hook_title: includeHookTitle,
-          normalize_audio: normalizeAudio,
-          clip_id: clip.id,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error("No se pudo iniciar el renderizado del clip.");
-      }
-
-      const { render_id } = await res.json();
-
-      pollIntervalRef.current = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`/api/clips/render-status/${render_id}`);
-          if (!statusRes.ok) return;
-
-          const data = await statusRes.json();
-          setRenderProgress(data.progress || 0);
-          setRenderLabel(data.step_label || "Procesando clip...");
-
-          if (data.status === "done") {
-            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            setIsRendering(false);
-            setRenderSuccess(true);
-            setStatus(subtitleTheme !== "none" ? "subtitulado" : "enfoque_generado");
-
-            const a = document.createElement("a");
-            a.href = `/api/clips/download/${data.filename}`;
-            a.download = data.filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            setTimeout(() => setRenderSuccess(false), 4500);
-          } else if (data.status === "error") {
-            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-            setIsRendering(false);
-            setRenderError(data.error || "Ocurrió un error al procesar.");
-          }
-        } catch {
-          // ignore
-        }
-      }, 1000);
-    } catch (err: any) {
-      setIsRendering(false);
-      setRenderError(err.message || "Error al conectar con el servidor.");
-    }
-  };
-
-  const statusMeta = STATUS_CONFIG[status] || STATUS_CONFIG.prospecto;
-
+  /* ─── Render ─────────────────────────────────────────────── */
   return (
+    <>
     <div
       className={`${styles.card} ${isActive ? styles.cardActive : ""}`}
       id={`clip-card-${index}`}
     >
-      {/* Top row: Index, Status Selector, Viral Score */}
-      <div className={styles.header}>
+      {/* Score badge — esquina superior derecha */}
+      <div className={`${styles.scoreBadge} ${styles[scoreClass]}`}>
+        <span>{getScoreIcon(clip.score)}</span>
+        <span>{clip.score}/10</span>
+      </div>
+
+      {/* MAIN ROW: index · thumbnail · content */}
+      <div className={styles.mainRow}>
+
+        {/* Número */}
         <div className={styles.indexBadge}>{index + 1}</div>
 
-        <div className={styles.titleGroup}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            {/* Status Dropdown */}
-            <select
-              value={status}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              className={styles.statusSelect}
-              style={{ color: statusMeta.color, background: statusMeta.bg }}
+        {/* Thumbnail */}
+        {thumbSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={thumbSrc} alt="" className={styles.thumb} loading="lazy" />
+        ) : (
+          <div className={styles.thumbPlaceholder}>▶</div>
+        )}
+
+        {/* Contenido */}
+        <div className={styles.content}>
+          {/* Status pill clickeable */}
+          <div ref={statusRef} style={{ position: "relative", display: "inline-block" }}>
+            <button
+              className={styles.statusPill}
+              style={{
+                color: statusMeta.color,
+                background: `${statusMeta.color}18`,
+                borderColor: `${statusMeta.color}30`,
+              }}
+              onClick={() => setShowStatusMenu(!showStatusMenu)}
+              title="Cambiar estado"
             >
-              <option value="prospecto">⚪ Prospecto</option>
-              <option value="enfoque_generado">🔵 9:16 Listo</option>
-              <option value="subtitulado">🟣 Subtitulado</option>
-              <option value="en_revision">🟠 En Revisión</option>
-              <option value="publicado">🟢 Publicado</option>
-              <option value="descartado">⚪ Descartado</option>
-            </select>
+              <span
+                className={styles.statusDot}
+                style={{ background: statusMeta.dot }}
+              />
+              {statusMeta.label}
+              <ChevronDown size={9} style={{ marginLeft: 2 }} />
+            </button>
+
+            {showStatusMenu && (
+              <div className={styles.statusDropdown}>
+                {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    className={styles.statusOption}
+                    onClick={() => handleStatusChange(key)}
+                  >
+                    <span className={styles.statusDot} style={{ background: cfg.dot }} />
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
+          {/* Título */}
           <h3 className={styles.title}>{clip.title}</h3>
 
-          <div className={styles.meta}>
+          {/* Tiempo */}
+          <div className={styles.timeRow}>
             <span className={styles.timestamp}>
-              ⏱ {formatTime(startSec)} → {formatTime(endSec)}
+              {formatTime(startSec)} → {formatTime(endSec)}
             </span>
             <span className={styles.duration}>{duration}s</span>
-
             <button
-              type="button"
               className={styles.adjustBtn}
               onClick={() => setIsEditingTime(!isEditingTime)}
-              title="Ajustar inicio y fin del clip"
+              title="Ajustar inicio y fin"
             >
-              ⚙ Ajustar tiempos
+              <Pencil size={9} />
+              Ajustar
             </button>
           </div>
         </div>
-
-        <div className={`score-badge ${scoreClass} ${styles.scoreBadge}`}>
-          <span>{getScoreEmoji(clip.score)}</span>
-          <span>{clip.score}/10</span>
-        </div>
       </div>
 
-      {/* Inline fine-tune time editor */}
+      {/* TAGS ROW */}
+      {tags.length > 0 && (
+        <div className={styles.tagsRow}>
+          {tags.map((tag) => (
+            <span key={tag} className={styles.tag}>{tag}</span>
+          ))}
+        </div>
+      )}
+
+      {/* DESCRIPTION */}
+      <p className={styles.reason}>{clip.reason}</p>
+
+      {/* INLINE TIME EDITOR */}
       {isEditingTime && (
         <div className={styles.timeEditorCard}>
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <div>
-              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Inicio (seg):</label>
+              <label style={{ fontSize: 10, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>
+                Inicio (seg)
+              </label>
               <input
                 type="number"
                 step="0.5"
                 value={startSec}
                 onChange={(e) => setStartSec(parseFloat(e.target.value) || 0)}
                 className="input-field"
-                style={{ width: 90, padding: "4px 8px", fontSize: 13 }}
+                style={{ width: 86, padding: "4px 8px", fontSize: 12 }}
               />
             </div>
             <div>
-              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block" }}>Fin (seg):</label>
+              <label style={{ fontSize: 10, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>
+                Fin (seg)
+              </label>
               <input
                 type="number"
                 step="0.5"
                 value={endSec}
                 onChange={(e) => setEndSec(parseFloat(e.target.value) || 0)}
                 className="input-field"
-                style={{ width: 90, padding: "4px 8px", fontSize: 13 }}
+                style={{ width: 86, padding: "4px 8px", fontSize: 12 }}
               />
             </div>
             <button
-              type="button"
               className="btn-primary"
-              style={{ padding: "6px 14px", fontSize: 12, marginTop: 14 }}
+              style={{ padding: "6px 12px", fontSize: 11, marginTop: 14 }}
               onClick={handleSaveTimes}
               disabled={isSavingTime}
             >
@@ -326,236 +296,112 @@ export default function ClipCard({
         </div>
       )}
 
-      {/* Reason */}
-      <p className={styles.reason}>{clip.reason}</p>
-
-      {/* Caption & Hashtags preview drawer */}
-      {(clip.caption || clip.hashtags) && (
+      {/* CAPTION COPY (colapsable) */}
+      {(clip.caption || clip.hashtags) && showCopyBox && (
         <div className={styles.socialCopyBox}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               {clip.caption && <p className={styles.captionText}>"{clip.caption}"</p>}
               {clip.hashtags && <p className={styles.hashtagsText}>{clip.hashtags}</p>}
             </div>
-            <button
-              type="button"
-              onClick={handleCopyText}
-              className={styles.copyBtn}
-              title="Copiar Copy y Hashtags al portapapeles"
-            >
-              {copiedCopy ? "✓ ¡Copiado!" : "📋 Copiar Copy"}
+            <button className={styles.copyBtn} onClick={handleCopyText}>
+              {copiedCopy ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Copiar</>}
             </button>
           </div>
         </div>
       )}
 
-      {/* Rendering progress indicator */}
-      {isRendering && (
-        <div className={styles.renderProgressContainer}>
-          <div className={styles.renderProgressBar}>
-            <div
-              className={styles.renderProgressFill}
-              style={{ width: `${renderProgress}%` }}
-            />
-          </div>
-          <div className={styles.renderProgressMeta}>
-            <span className="spinner spinner-sm" />
-            <span className={styles.renderLabelText}>{renderLabel}</span>
-            <span className={styles.renderPctText}>{renderProgress}%</span>
-          </div>
-        </div>
-      )}
-
-      {/* Success notification */}
-      {renderSuccess && (
+      {/* SUCCESS BADGE */}
+      {exportSuccess && (
         <div className={styles.successBadge}>
-          <span>✓</span>
-          <span>¡Clip descargado en tu equipo con subtítulos y audio optimizado!</span>
+          <Check size={13} />
+          ¡Clip exportado y descargado!
         </div>
       )}
 
-      {/* Error notification */}
-      {renderError && (
-        <div className={styles.errorBadge}>
-          <span>⚠️</span>
-          <span>{renderError}</span>
-        </div>
-      )}
-
-      {/* Action buttons */}
+      {/* ACTION BUTTONS ROW */}
       <div className={styles.actionsRow}>
+
+        {/* Ver clip */}
         <button
           className={`${styles.jumpBtn} ${isActive ? styles.jumpBtnActive : ""}`}
           onClick={() => onJump(startSec)}
           id={`jump-btn-${index}`}
         >
-          <span>▶</span>
-          <span>{isActive ? "Reproduciendo..." : "Saltar al clip"}</span>
+          <Play size={12} fill="currentColor" />
+          {isActive ? "Reproduciendo" : "Ver clip"}
         </button>
 
-        {/* Download Clip Menu */}
-        <div className={styles.downloadWrapper} ref={menuRef}>
+        {/* Editar (abre time editor + copy) */}
+        <button
+          className={styles.editBtn}
+          onClick={() => {
+            setIsEditingTime(!isEditingTime);
+            setShowCopyBox(!showCopyBox);
+          }}
+          title="Editar tiempos y copy"
+        >
+          <Pencil size={12} />
+          Editar
+        </button>
+
+        {/* Descargar → abre modal Fase 2 */}
+        <div className={styles.downloadWrapper}>
           <button
-            type="button"
-            className={`${styles.downloadBtn} ${isRendering ? styles.downloadBtnDisabled : ""}`}
-            onClick={() => !isRendering && setShowMenu(!showMenu)}
-            disabled={isRendering}
+            className={styles.downloadBtn}
+            onClick={() => {
+              setCustomizerMode("smart_vertical");
+              setShowCustomizer(true);
+            }}
             id={`download-btn-${index}`}
-            title="Descargar clip con subtítulos y formato vertical"
+            title="Personalizar y descargar clip"
           >
-            <span>📥</span>
-            <span>{isRendering ? "Generando..." : "Descargar ▾"}</span>
+            <Download size={12} />
+            Descargar
           </button>
-
-          {showMenu && (
-            <div className={styles.dropdownMenu}>
-              <div className={styles.dropdownHeader}>
-                🎨 Opciones de Subtítulos y Audio
-              </div>
-
-              {/* Theme selection */}
-              <div className={styles.themeSelectorGroup}>
-                <label className={styles.configLabel}>Tema de Subtítulos:</label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                  <button
-                    type="button"
-                    className={`${styles.themeOptionBtn} ${subtitleTheme === "hormozi" ? styles.themeOptionActive : ""}`}
-                    onClick={() => setSubtitleTheme("hormozi")}
-                  >
-                    🟡 Hormozi Pop
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.themeOptionBtn} ${subtitleTheme === "minimal" ? styles.themeOptionActive : ""}`}
-                    onClick={() => setSubtitleTheme("minimal")}
-                  >
-                    ⚪ Minimal Clean
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.themeOptionBtn} ${subtitleTheme === "cyberpunk" ? styles.themeOptionActive : ""}`}
-                    onClick={() => setSubtitleTheme("cyberpunk")}
-                  >
-                    🔥 Cyberpunk
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.themeOptionBtn} ${subtitleTheme === "none" ? styles.themeOptionActive : ""}`}
-                    onClick={() => setSubtitleTheme("none")}
-                  >
-                    🚫 Sin subtítulos
-                  </button>
-                </div>
-
-                {/* Toggles */}
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <label className={styles.checkboxLabel}>
-                    <input
-                      type="checkbox"
-                      checked={includeHookTitle}
-                      onChange={(e) => setIncludeHookTitle(e.target.checked)}
-                    />
-                    <span>Incluir Título Gancho en primeros 3.5s</span>
-                  </label>
-                  <label className={styles.checkboxLabel}>
-                    <input
-                      type="checkbox"
-                      checked={normalizeAudio}
-                      onChange={(e) => setNormalizeAudio(e.target.checked)}
-                    />
-                    <span>Normalizar volumen de audio (Loudnorm)</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className={styles.dropdownHeader} style={{ marginTop: 6 }}>
-                🎬 Formato de Exportación
-              </div>
-
-              {/* Nivel 2 & 3: Smart Vertical IA */}
-              <button
-                type="button"
-                className={`${styles.menuItem} ${styles.menuItemFeatured}`}
-                onClick={() => handleDownload("smart_vertical")}
-              >
-                <div className={styles.menuItemIcon}>📱</div>
-                <div className={styles.menuItemText}>
-                  <div className={styles.menuItemTitle}>
-                    Vertical IA (Smart 9:16)
-                    <span className={styles.badgeSparkle}>Nivel 3 ★</span>
-                  </div>
-                  <div className={styles.menuItemSub}>
-                    Enfoca al orador con Face Tracking suave o divide pantalla en podcasts
-                  </div>
-                </div>
-              </button>
-
-              {/* Podcast Split Screen direct */}
-              <button
-                type="button"
-                className={styles.menuItem}
-                onClick={() => handleDownload("split_screen")}
-              >
-                <div className={styles.menuItemIcon}>🎙️</div>
-                <div className={styles.menuItemText}>
-                  <div className={styles.menuItemTitle}>
-                    Podcast Split-Screen (9:16)
-                  </div>
-                  <div className={styles.menuItemSub}>
-                    Pantalla dividida con ambos oradores apilados verticalmente
-                  </div>
-                </div>
-              </button>
-
-              {/* Nivel 1: Blur Background */}
-              <button
-                type="button"
-                className={styles.menuItem}
-                onClick={() => handleDownload("vertical_blur")}
-              >
-                <div className={styles.menuItemIcon}>🎬</div>
-                <div className={styles.menuItemText}>
-                  <div className={styles.menuItemTitle}>
-                    Vertical Blur (9:16)
-                  </div>
-                  <div className={styles.menuItemSub}>
-                    Video horizontal centrado con fondo desenfocado
-                  </div>
-                </div>
-              </button>
-
-              {/* Original 16:9 */}
-              <button
-                type="button"
-                className={styles.menuItem}
-                onClick={() => handleDownload("original")}
-              >
-                <div className={styles.menuItemIcon}>💻</div>
-                <div className={styles.menuItemText}>
-                  <div className={styles.menuItemTitle}>
-                    Original (16:9)
-                  </div>
-                  <div className={styles.menuItemSub}>
-                    Corte directo en calidad nativa horizontal
-                  </div>
-                </div>
-              </button>
-            </div>
-          )}
         </div>
 
+        {/* Más opciones */}
+        <button
+          className={styles.moreBtn}
+          onClick={() => setShowCopyBox(!showCopyBox)}
+          title="Ver copy y hashtags"
+        >
+          <MoreHorizontal size={14} />
+        </button>
+
+        {/* YouTube link */}
         {videoId && (
           <a
             href={`https://youtu.be/${videoId}?t=${Math.floor(startSec)}`}
             target="_blank"
             rel="noopener noreferrer"
             className={styles.ytExtLink}
-            title="Abrir este momento directamente en YouTube"
+            title="Abrir en YouTube"
           >
             ↗ YouTube
           </a>
         )}
       </div>
     </div>
+
+    {/* Modal de Personalización – Fase 2 */}
+    {showCustomizer && (
+      <ClipCustomizerModal
+        clip={{ ...clip, start_seconds: startSec, end_seconds: endSec }}
+        index={index}
+        videoId={videoId}
+        videoUrl={videoUrl}
+        initialMode={customizerMode}
+        onClose={() => setShowCustomizer(false)}
+        onExportDone={(newStatus) => {
+          setStatus(newStatus);
+          setShowCustomizer(false);
+          setExportSuccess(true);
+          setTimeout(() => setExportSuccess(false), 5000);
+        }}
+      />
+    )}
+    </>
   );
 }

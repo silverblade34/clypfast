@@ -277,6 +277,12 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* Clase de animación spin para iconos SVG de Lucide (ej. <Loader>) */
+.spin {
+  animation: spin 0.9s linear infinite;
+  display: inline-block;
+}
+
 /* ── Progress Bar ──────────────────────────────────────────── */
 .progress-bar-track {
   height: 4px;

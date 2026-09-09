@@ -427,6 +427,13 @@ def process_clip(
     clip_title: str | None = None,
     words_data: list[dict[str, Any]] | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    # --- Overrides de personalización del modal ---
+    hook_title_custom: str | None = None,
+    hook_duration: float | None = None,
+    sub_font: str | None = None,
+    sub_base_color: str | None = None,
+    sub_highlight_color: str | None = None,
+    sub_margin_v: int | None = None,
 ) -> Path:
     """
     High-level orchestrator: Slices clip and applies requested formatting.
@@ -476,6 +483,13 @@ def process_clip(
                     output_ass_path=temp_ass,
                     theme=subtitle_theme,
                     include_hook_title=include_hook_title,
+                    # Propagación de overrides del modal
+                    hook_title_custom=hook_title_custom,
+                    hook_duration=hook_duration,
+                    sub_font=sub_font,
+                    sub_base_color=sub_base_color,
+                    sub_highlight_color=sub_highlight_color,
+                    sub_margin_v=sub_margin_v,
                 )
                 # Escape path for ffmpeg subtitles filter
                 escaped_ass = str(temp_ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")

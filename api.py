@@ -442,6 +442,13 @@ class RenderClipRequest(BaseModel):
     include_hook_title: bool = True
     normalize_audio: bool = True
     clip_id: int | None = None
+    # --- Personalización del modal (Fase 2) ---
+    hook_title_custom: str | None = None        # Texto personalizado del gancho (sobreescribe el título IA)
+    hook_duration: float | None = None          # Duración en pantalla del gancho (seg, ej: 3.5)
+    sub_font: str | None = None                 # Fuente de subtítulos (debe existir en el sistema / fontsdir)
+    sub_base_color: str | None = None           # Color base en formato ASS: &H00BBGGRR&
+    sub_highlight_color: str | None = None      # Color de palabra activa en formato ASS
+    sub_margin_v: int | None = None             # Margen vertical desde el fondo (píxeles sobre 1920px)
 
 
 def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
@@ -489,6 +496,13 @@ def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
             clip_title=req.title,
             words_data=words_data,
             progress_callback=on_progress,
+            # Propagación de overrides del modal (Fase 2)
+            hook_title_custom=req.hook_title_custom,
+            hook_duration=req.hook_duration,
+            sub_font=req.sub_font,
+            sub_base_color=req.sub_base_color,
+            sub_highlight_color=req.sub_highlight_color,
+            sub_margin_v=req.sub_margin_v,
         )
 
         # Update status in SQLite database if clip_id was provided

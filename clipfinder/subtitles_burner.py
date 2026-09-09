@@ -147,22 +147,43 @@ def generate_ass_subtitles(
     include_hook_title: bool = True,
     target_w: int = 1080,
     target_h: int = 1920,
+    # --- Personalización dinámica desde el modal (overrides sobre el tema base) ---
+    hook_title_custom: str | None = None,
+    hook_duration: float | None = None,
+    sub_font: str | None = None,
+    sub_base_color: str | None = None,
+    sub_highlight_color: str | None = None,
+    sub_margin_v: int | None = None,
 ) -> Path:
     """
     Generate an ASS subtitle file formatted with Hook Title and active word highlights.
+
+    Personalización dinámica:
+    - hook_title_custom: sobreescribe el texto del gancho (por defecto usa clip_title).
+    - hook_duration: duración en pantalla del gancho en segundos (default: 3.5s).
+    - sub_font: sobreescribe la fuente del tema base.
+    - sub_base_color: color principal del texto en formato ASS (&H00BBGGRR&).
+    - sub_highlight_color: color de la palabra resaltada en formato ASS.
+    - sub_margin_v: margen vertical en píxeles (sobre 1920px) desde el fondo.
     """
     output_ass_path.parent.mkdir(parents=True, exist_ok=True)
     cfg = THEMES.get(theme, THEMES["hormozi"])
 
-    font_name = cfg["font"]
+    # Aplicar overrides del modal: si se pasa un valor, tiene precedencia sobre el tema
+    font_name = sub_font if sub_font else cfg["font"]
     font_size = cfg["size"]
-    base_col = cfg["base_color"]
-    hl_col = cfg["highlight_color"]
+    base_col = sub_base_color if sub_base_color else cfg["base_color"]
+    hl_col = sub_highlight_color if sub_highlight_color else cfg["highlight_color"]
     out_col = cfg["outline_color"]
     outline = cfg["outline"]
     shadow = cfg["shadow"]
-    margin_v = cfg["margin_v"]
+    margin_v = sub_margin_v if sub_margin_v is not None else cfg["margin_v"]
     to_upper = cfg["uppercase"]
+
+    # Texto del gancho: texto personalizado tiene precedencia sobre el título del clip
+    effective_hook_title = hook_title_custom if hook_title_custom else clip_title
+    # Duración del gancho: override o default de 3.5s
+    effective_hook_duration = hook_duration if hook_duration is not None else 3.5
 
     ass_lines: list[str] = [
         "[Script Info]",
@@ -183,17 +204,22 @@ def generate_ass_subtitles(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    # 1. Hook Title (0.0s to 3.5s)
-    if include_hook_title and clip_title:
-        title_text = clip_title.strip().upper()
-        # Wrap title in 2 lines if longer than 35 chars
+    # 1. Hook Title (0.0s a effective_hook_duration)
+    if include_hook_title and effective_hook_title:
+        title_text = effective_hook_title.strip().upper()
+        # Salto de línea DETERMINISTA: si excede 35 chars, partimos manualmente con \N
+        # Esto garantiza que el corte de línea sea idéntico entre el modal (CSS <br/>) y ffmpeg (\N en ASS)
         if len(title_text) > 35:
             words_title = title_text.split()
             mid = len(words_title) // 2
+            # Aseguramos que la primera línea no exceda 35 chars; ajustamos mid si es necesario
+            while mid > 1 and len(" ".join(words_title[:mid])) > 35:
+                mid -= 1
             title_text = " ".join(words_title[:mid]) + "\\N" + " ".join(words_title[mid:])
-        
+
+        hook_end_fmt = _fmt_ass_time(effective_hook_duration)
         ass_lines.append(
-            f"Dialogue: 1,0:00:00.00,0:00:03.50,HookTitle,,0,0,0,,{{\\fad(200,250)}}"
+            f"Dialogue: 1,0:00:00.00,{hook_end_fmt},HookTitle,,0,0,0,,{{\\fad(200,250)}}"
             f"{{\\c&H0000FFFF&}}★ {{\\c&H00FFFFFF&}}{title_text}{{\\c&H0000FFFF&}} ★"
         )
 
