@@ -276,6 +276,16 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   const [thumbSrc, setThumbSrc] = useState<string | null>(primaryThumb);
   const [thumbLoaded, setThumbLoaded] = useState(false);
 
+  // Keep internal state synchronized if clip props update
+  useEffect(() => {
+    setStartSec(clip.start_seconds);
+    setEndSec(clip.end_seconds);
+    setStatus(clip.status || "prospecto");
+    if (primaryThumb) {
+      setThumbSrc(primaryThumb);
+    }
+  }, [clip.start_seconds, clip.end_seconds, clip.status, primaryThumb]);
+
   // Sync inputs when startSec/endSec change
   useEffect(() => {
     setStartTimeInput(formatTime(startSec));
@@ -406,7 +416,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
             className={styles.thumbWrapper}
             onClick={() => {
               onJump(startSec);
-              if (typeof window !== "undefined") {
+              if (typeof window !== "undefined" && window.innerWidth <= 1024) {
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }
             }}
@@ -508,7 +518,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                 className={`${styles.jumpBtn} ${isActive ? styles.jumpBtnActive : ""}`}
                 onClick={() => {
                   onJump(startSec);
-                  if (typeof window !== "undefined") {
+                  if (typeof window !== "undefined" && window.innerWidth <= 1024) {
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }
                 }}

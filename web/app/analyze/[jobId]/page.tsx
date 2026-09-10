@@ -144,15 +144,17 @@ export default function AnalyzePage({
     return () => stopPolling();
   }, [poll]);
 
-  function handleJump(startSeconds: number, idx: number) {
+  function handleJump(startSeconds: number, idx?: number) {
     try {
       playerRef.current?.seekTo(startSeconds);
     } catch (err) {
       console.warn("Error seeking player:", err);
     }
-    setActiveClipIdx(idx);
+    if (idx !== undefined && idx >= 0) {
+      setActiveClipIdx(idx);
+    }
 
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && window.innerWidth <= 1024) {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -173,16 +175,8 @@ export default function AnalyzePage({
   const isError = job?.status === "error" || !!error;
 
   const orderedClipsWithIndex = useMemo(() => {
-    const list = clips.map((clip, originalIndex) => ({ clip, originalIndex }));
-    if (activeClipIdx !== null && activeClipIdx >= 0 && activeClipIdx < list.length) {
-      const activeIdx = list.findIndex((it) => it.originalIndex === activeClipIdx);
-      if (activeIdx > 0) {
-        const [activeItem] = list.splice(activeIdx, 1);
-        list.unshift(activeItem);
-      }
-    }
-    return list;
-  }, [clips, activeClipIdx]);
+    return clips.map((clip, originalIndex) => ({ clip, originalIndex }));
+  }, [clips]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -496,7 +490,7 @@ export default function AnalyzePage({
                   currentTime={playerTime}
                   clips={clips}
                   activeClipIndex={activeClipIdx}
-                  onJump={(s, i) => handleJump(s, i ?? 0)}
+                  onJump={(s, i) => handleJump(s, i)}
                   videoId={videoId}
                   dbVideoId={dbVidId}
                   onUpdateClipTimes={handleUpdateClipTimes}
