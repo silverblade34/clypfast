@@ -152,9 +152,8 @@ export default function AnalyzePage({
     }
     setActiveClipIdx(idx);
 
-    const card = document.getElementById(`clip-card-${idx}`);
-    if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 

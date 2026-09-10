@@ -134,7 +134,9 @@ export default function DbAnalyzePage({
     setPlayerTime(startSeconds);
     if (idx !== undefined) {
       setActiveClipIdx(idx);
-      document.getElementById(`clip-card-${idx}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 

@@ -394,7 +394,12 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
           {/* Video Thumbnail with exact moment frame & timestamp pill */}
           <div
             className={styles.thumbWrapper}
-            onClick={() => onJump(startSec)}
+            onClick={() => {
+              onJump(startSec);
+              if (typeof window !== "undefined") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
             title="Reproducir este momento"
           >
             {!thumbLoaded && <div className={styles.skeletonShimmer} />}
@@ -491,7 +496,12 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
               <button
                 type="button"
                 className={`${styles.jumpBtn} ${isActive ? styles.jumpBtnActive : ""}`}
-                onClick={() => onJump(startSec)}
+                onClick={() => {
+                  onJump(startSec);
+                  if (typeof window !== "undefined") {
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
                 id={`jump-btn-${index}`}
               >
                 <Play size={12} fill="currentColor" />
