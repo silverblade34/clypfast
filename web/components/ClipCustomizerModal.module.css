@@ -151,12 +151,118 @@
   display: block;
 }
 
-/* Capas HUD sobre el video */
-.hudLayer {
+/* Live Preview Canvas & Modes */
+.previewCanvas {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  z-index: 1;
+}
+
+/* 1. Blur BG */
+.blurBgImage {
+  position: absolute;
+  inset: -15%;
+  width: 130%;
+  height: 130%;
+  object-fit: cover;
+  filter: blur(16px) brightness(0.5);
+  transform: scale(1.15);
   pointer-events: none;
-  /* Espacio de coordenadas virtual: 1080x1920 escalado con CSS */
+}
+
+.blurCenterWrapper {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  box-shadow: 0 4px 28px rgba(0, 0, 0, 0.85);
+}
+
+.blurCenterImage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+/* 2. Smart Vertical (Crop 9:16) */
+.smartVerticalImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+}
+
+/* 3. Original 16:9 Letterboxed */
+.originalWrapper {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.originalImage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  display: block;
+}
+
+/* 4. Split Screen */
+.splitWrapper {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #000;
+}
+
+.splitTopImage {
+  width: 100%;
+  height: 50%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.splitDivider {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
+  z-index: 3;
+}
+
+.splitBottomImage {
+  width: 100%;
+  height: 50%;
+  object-fit: cover;
+  object-position: bottom center;
+  filter: brightness(0.9);
+}
+
+.emptyPreviewPlaceholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 24px;
 }
 
 /* Hook Title HUD */
@@ -178,6 +284,7 @@
   paint-order: stroke fill;
   -webkit-text-stroke: 3px #000;
   text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  z-index: 10;
 }
 
 .hookHUD .hookStar {
@@ -199,6 +306,7 @@
   letter-spacing: 0.01em;
   paint-order: stroke fill;
   -webkit-text-stroke: 2px #000;
+  z-index: 10;
 }
 
 /* Overlay de Safe Zones (guía TikTok) */
@@ -206,6 +314,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 15;
 }
 
 .safeZoneLine {

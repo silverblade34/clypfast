@@ -34,8 +34,10 @@ import {
   Maximize2,
   Columns2,
   Tv,
+  Film,
 } from "lucide-react";
 import type { Clip } from "./ClipCard";
+import { extractYouTubeId } from "./ClipCard";
 import styles from "./ClipCustomizerModal.module.css";
 
 /* ─── Tipos ─────────────────────────────────────────────────── */
@@ -203,6 +205,53 @@ export default function ClipCustomizerModal({
 
   // ── Estado: Formato ──────────────────────────────────────────
   const [mode, setMode] = useState<CropMode>(initialMode);
+
+  // ── Vista previa visual del clip / miniatura ─────────────────
+  const effectiveVideoId = videoId || extractYouTubeId(videoUrl) || extractYouTubeId(clip.video_source_url);
+  const initialThumb = effectiveVideoId
+    ? `https://img.youtube.com/vi/${effectiveVideoId}/hqdefault.jpg`
+    : clip.id
+    ? `/api/clips/${clip.id}/thumbnail`
+    : null;
+
+  const [thumbSrc, setThumbSrc] = useState<string | null>(initialThumb);
+  const [hasThumbError, setHasThumbError] = useState(false);
+
+  useEffect(() => {
+    setThumbSrc(initialThumb);
+    setHasThumbError(false);
+  }, [initialThumb]);
+
+  const handleThumbError = () => {
+    if (effectiveVideoId && thumbSrc?.includes("hqdefault")) {
+      setThumbSrc(`https://img.youtube.com/vi/${effectiveVideoId}/mqdefault.jpg`);
+    } else if (clip.id && !thumbSrc?.includes("/api/clips/")) {
+      setThumbSrc(`/api/clips/${clip.id}/thumbnail`);
+    } else {
+      setHasThumbError(true);
+    }
+  };
+
+  // Frase muestra representativa del clip para previsualización WYSIWYG
+  const sampleWords = (() => {
+    const rawText = clip.caption || clip.title || "";
+    const clean = rawText.replace(/[^\w\sáéíóúÁÉÍÓÚñÑüÜ]/g, " ").trim();
+    const words = clean.split(/\s+/).filter((w) => w.length > 0);
+    if (words.length >= 3) {
+      const chunk = words.slice(0, 4);
+      const highlightIdx = Math.min(1, chunk.length - 1);
+      return {
+        before: chunk.slice(0, highlightIdx).join(" "),
+        highlight: chunk[highlightIdx],
+        after: chunk.slice(highlightIdx + 1).join(" "),
+      };
+    }
+    return {
+      before: "Texto de",
+      highlight: "ejemplo",
+      after: "en vivo",
+    };
+  })();
 
   // ── Estado: Safe Zones ───────────────────────────────────────
   const [showSafeZones, setShowSafeZones] = useState(false);
@@ -375,6 +424,73 @@ export default function ClipCustomizerModal({
 
             {/* Visor 9:16 */}
             <div className={styles.videoWrap}>
+              {/* Vista previa visual con fotograma/miniatura según formato seleccionado */}
+              <div className={styles.previewCanvas}>
+                {thumbSrc && !hasThumbError ? (
+                  <>
+                    {mode === "vertical_blur" && (
+                      <>
+                        <img
+                          src={thumbSrc}
+                          alt="Fondo difuminado"
+                          className={styles.blurBgImage}
+                          onError={handleThumbError}
+                        />
+                        <div className={styles.blurCenterWrapper}>
+                          <img
+                            src={thumbSrc}
+                            alt="Frame central 16:9"
+                            className={styles.blurCenterImage}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {mode === "smart_vertical" && (
+                      <img
+                        src={thumbSrc}
+                        alt="Recorte vertical inteligente 9:16"
+                        className={styles.smartVerticalImage}
+                        onError={handleThumbError}
+                      />
+                    )}
+
+                    {mode === "original" && (
+                      <div className={styles.originalWrapper}>
+                        <img
+                          src={thumbSrc}
+                          alt="Original 16:9 con bandas negras"
+                          className={styles.originalImage}
+                          onError={handleThumbError}
+                        />
+                      </div>
+                    )}
+
+                    {mode === "split_screen" && (
+                      <div className={styles.splitWrapper}>
+                        <img
+                          src={thumbSrc}
+                          alt="Mitad superior"
+                          className={styles.splitTopImage}
+                          onError={handleThumbError}
+                        />
+                        <div className={styles.splitDivider} />
+                        <img
+                          src={thumbSrc}
+                          alt="Mitad inferior"
+                          className={styles.splitBottomImage}
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className={styles.emptyPreviewPlaceholder}>
+                    <Film size={28} style={{ opacity: 0.35, marginBottom: 4 }} />
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Clip {index + 1}</span>
+                  </div>
+                )}
+              </div>
+
               {/* Capa de Safe Zones (guía TikTok/Reels) */}
               {showSafeZones && (
                 <div className={styles.safeZonesOverlay}>
@@ -495,7 +611,7 @@ export default function ClipCustomizerModal({
                       WebkitTextStroke: isMinimal ? "0.7px #000" : isNeon ? "1px #000" : isPodcast ? "none" : "2px #000",
                     }}
                   >
-                    Texto de{" "}
+                    {sampleWords.before ? `${sampleWords.before} ` : ""}
                     <span
                       style={{
                         color: highlightColor,
@@ -503,9 +619,9 @@ export default function ClipCustomizerModal({
                         fontWeight: 900,
                       }}
                     >
-                      ejemplo
-                    </span>{" "}
-                    en vivo
+                      {sampleWords.highlight}
+                    </span>
+                    {sampleWords.after ? ` ${sampleWords.after}` : ""}
                   </div>
                 );
               })()}

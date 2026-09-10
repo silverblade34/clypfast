@@ -33,6 +33,37 @@ interface Props {
   videoChannel?: string;
 }
 
+export function toFirstPersonReflection(reason?: string, title?: string): string {
+  const r = (reason || "").trim();
+  if (!r) {
+    return "Para mí, la clave está en no quedarse solo en la teoría y aplicar esto con método para ver resultados tangibles.";
+  }
+
+  // Check if already written in first person
+  if (/\b(yo|mi\b|mis\b|creo|siento|he aprendido|pienso|para m[ií]|me di cuenta|me hizo|siempre he)\b/i.test(r)) {
+    return r;
+  }
+
+  // Strip editorial meta-analysis endings
+  let clean = r.replace(/,?\s*(?:generando|lo que genera|ideal para|lo que hace que|haciendo que|dejando una lección|con alto potencial|creando identificaci[oó]n|para captar).*$/i, "").trim();
+  clean = clean.replace(/\.+$/, "");
+
+  // Match leading third-person verbs (Expone, Muestra, Explica, Enseña, Aborda, Destaca, Describe, Detalla, Presenta, Revela, Refleja, Demuestra, Ofrece)
+  const openerMatch = clean.match(/^(?:Expone|Muestra|Explica|Enseña|Aborda|Destaca|Describe|Detalla|Presenta|Revela|Refleja|Demuestra|Ofrece)\s+(.*)$/i);
+  const rest = openerMatch && openerMatch[1] ? openerMatch[1].trim() : clean;
+  const formattedRest = rest.length > 1 ? rest.charAt(0).toLowerCase() + rest.slice(1) : rest;
+
+  if (/^(?:un|una|el|la)\s+(?:dolor|problema|error|riesgo|caos|falla|descuadre)/i.test(formattedRest)) {
+    return `Para mí, esto toca un punto crítico: ${formattedRest}. Si no atacas la raíz de esto a tiempo, terminas perdiendo recursos valiosos y frenando el crecimiento de tu operación.`;
+  }
+
+  if (/^(?:un|una|el|la)\s+(?:cambio|giro|oportunidad|lecci[oó]n|método|forma|estrategia|hack|secreto)/i.test(formattedRest)) {
+    return `Para mí, el verdadero valor de este momento es ${formattedRest}. Aplicar este enfoque en la práctica te ahorra semanas de ensayo y error, y eleva la calidad de tus resultados.`;
+  }
+
+  return `Mi conclusión sobre esto es directa: ${formattedRest}. Tener claridad sobre este principio y aplicarlo con método es lo que realmente marca la diferencia en los resultados.`;
+}
+
 export function buildPostDescription({
   caption,
   reason,
@@ -55,11 +86,11 @@ export function buildPostDescription({
   hashtags?: string[] | string;
 }): string {
   const text = (caption || title || "").trim();
-  const lower = text.toLowerCase();
 
-  const hasReflection = lower.includes("reflexión") || text.includes("💡");
-  const hasVideo = lower.includes("video:") || text.includes("📌");
-  const hasChannel = lower.includes("canal:") || text.includes("🎙");
+  // ONLY treat as having reflection if "reflexión:" is explicitly present (NEVER check for "💡" alone, as hooks use it!)
+  const hasReflection = /(?:^|\s)(?:💡\s*)?reflexi[oó]n:/i.test(text);
+  const hasVideo = /(?:^|\n)\s*📌\s*video:/i.test(text);
+  const hasChannel = /(?:^|\n)\s*🎙\s*canal:/i.test(text);
 
   const blocks: string[] = [];
 
@@ -68,16 +99,17 @@ export function buildPostDescription({
     blocks.push(text);
   }
 
-  // 2. Pequeña reflexión (si no está ya integrada)
+  // 2. Reflexión de valor táctico en primera persona
   if (!hasReflection && reason) {
-    blocks.push(`💡 Reflexión: ${reason.trim()}`);
+    const fp = toFirstPersonReflection(reason, title);
+    blocks.push(`💡 Reflexión: ${fp}`);
   }
 
   // 3. CTA si no tiene pregunta ni llamada
   if (
     !text.includes("?") &&
     !text.includes("¿") &&
-    !lower.includes("opinas") &&
+    !text.toLowerCase().includes("opinas") &&
     !text.includes("👇")
   ) {
     blocks.push("¿Qué opinas tú de esto? ¡Déjame tu punto de vista en los comentarios! 👇");
@@ -145,7 +177,7 @@ function parseTimeToSeconds(timeStr: string): number | null {
   return null;
 }
 
-function extractYouTubeId(url?: string | null): string | null {
+export function extractYouTubeId(url?: string | null): string | null {
   if (!url) return null;
   const patterns = [
     /[?&]v=([a-zA-Z0-9_-]{11})/,
@@ -252,13 +284,13 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
 
   // Extract clean hook quote, reflection and attribution
   let quoteText = "";
-  let reflectionText = clip.reason || "";
+  let rawReflection = clip.reason || "";
 
   if (clip.caption) {
     const cleanCap = clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim();
     const reflectionMatch = cleanCap.match(/(?:💡\s*)?[Rr]eflexi[oó]n:\s*([^📌🎙\n]+(?:\n[^📌🎙\n]+)*)/);
     if (reflectionMatch) {
-      reflectionText = reflectionMatch[1].trim();
+      rawReflection = reflectionMatch[1].trim();
       const beforeRef = cleanCap.split(/(?:💡\s*)?[Rr]eflexi[oó]n:/)[0].trim();
       quoteText = beforeRef;
     } else {
@@ -266,7 +298,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
       const nonAttribution = paragraphs.filter((p) => !p.startsWith("📌") && !p.startsWith("🎙"));
       if (nonAttribution.length >= 2 && !clip.reason) {
         quoteText = nonAttribution[0];
-        reflectionText = nonAttribution.slice(1).join("\n\n");
+        rawReflection = nonAttribution.slice(1).join("\n\n");
       } else {
         quoteText = nonAttribution[0] || cleanCap;
       }
@@ -274,6 +306,8 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   } else if (clip.title) {
     quoteText = `“${clip.title}”`;
   }
+
+  const reflectionText = toFirstPersonReflection(rawReflection, clip.title);
 
   // Close more menu on outside click
   useEffect(() => {
@@ -758,14 +792,48 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                 </div>
                 <pre className={styles.copyPreBlock}>{getFullPostCopy()}</pre>
               </div>
-              <button
-                type="button"
-                className={styles.actionBtn}
-                onClick={handleCopyText}
-                style={{ fontSize: 11, padding: "6px 12px", whiteSpace: "nowrap", alignSelf: "flex-start" }}
-              >
-                {copiedCopy ? <><Check size={11} color="#4ade80" /> Copiado</> : <><Copy size={11} /> Copiar texto</>}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+                <button
+                  type="button"
+                  className={styles.actionBtn}
+                  onClick={handleCopyText}
+                  style={{ fontSize: 11, padding: "6px 12px", whiteSpace: "nowrap" }}
+                >
+                  {copiedCopy ? <><Check size={11} color="#4ade80" /> Copiado</> : <><Copy size={11} /> Copiar texto</>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCopyBox(false)}
+                  title="Cerrar descripción"
+                  aria-label="Cerrar descripción"
+                  style={{
+                    background: "rgba(255, 255, 255, 0.06)",
+                    border: "1px solid rgba(255, 255, 255, 0.12)",
+                    borderRadius: "6px",
+                    color: "#94a3b8",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "28px",
+                    height: "28px",
+                    padding: 0,
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = "#f87171";
+                    e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)";
+                    e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "#94a3b8";
+                    e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
+                    e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.12)";
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
             </div>
           </div>
         )}

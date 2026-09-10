@@ -119,19 +119,25 @@ REGLA CRÍTICA PARA LA DESCRIPCIÓN DEL POST ("caption"):
 El campo "caption" es la descripción completa del post lista para publicar en redes sociales (TikTok / Instagram Reels / YouTube Shorts / LinkedIn).
 DEBE seguir obligatoriamente esta estructura de 4 bloques:
 1. Gancho inicial: 1 frase llamativa o intrigante en primera línea que atrape de inmediato.
-2. Pequeña reflexión: 1 o 2 oraciones con una reflexión profunda, lección clave o moraleja sobre este momento (iniciando con "💡 Reflexión: ...").
-3. Pregunta o llamado a la acción (CTA) para invitar a la audiencia a comentar.
+2. Pequeña reflexión inspiracional (EN PRIMERA PERSONA OBLIGATORIA):
+   - DEBE estar redactada en PRIMERA PERSONA ("yo", "siento", "he aprendido", "para mí", "creo firmemente", "siempre he creído"), como si tú fueras el creador del post compartiendo tu opinión personal, profunda e inspiracional tras ver este momento.
+   - Da un toque reflexivo, humano y motivador que conecte emocionalmente con quien lo lee.
+   - Debe iniciar obligatoriamente con: "💡 Reflexión: ..."
+   - ESTÁ ESTRICTAMENTE PROHIBIDO redactar en tercera persona o como crítico/analista editorial (NO uses "El clip expone...", "El video muestra...", "Explica cómo...", "Muestra que..."). Exprésate SIEMPRE en primera persona:
+     * "💡 Reflexión: Para mí, esto nos recuerda que el verdadero éxito no llega por casualidad, sino por atreverte a mantener el rumbo cuando todo parece complicado."
+     * "💡 Reflexión: Siempre he creído que la mayor ventaja que puedes tener es la capacidad de adaptarte y aprender rápido, sin miedo a empezar de cero."
+3. Pregunta o llamado a la acción (CTA) para invitar a la audiencia a compartir su punto de vista.
 4. Mención obligatoria de la fuente:
    📌 Video: {video_title}
    🎙 Canal: {video_channel}
 
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
-{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Gancho inicial\\n\\n💡 Reflexión: ...\\n\\n¿Qué opinas? ¡Comenta abajo! 👇\\n\\n📌 Video: {video_title}\\n🎙 Canal: {video_channel}", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
+{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Gancho inicial\\n\\n💡 Reflexión: Para mí, esto me deja una lección muy clara...\\n\\n¿Qué opinas tú de esto? ¡Comenta abajo! 👇\\n\\n📌 Video: {video_title}\\n🎙 Canal: {video_channel}", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
 
 - "title": máximo 60 caracteres, en el mismo idioma del video
 - "reason": 1-2 oraciones explicando el potencial viral específico
 - "score": entero del 1 al 10 (10 = viral garantizado)
-- "caption": descripción completa estructurada con gancho, pequeña reflexión, CTA y mención del video y canal
+- "caption": descripción completa en primera persona con gancho, reflexión inspiracional personal, CTA y mención del video y canal
 - "hashtags": lista de 5 a 8 hashtags altamente relevantes para el clip
 
 Transcripción:
@@ -447,6 +453,42 @@ def _validate_and_sanitize_clips(
     return sanitized
 
 
+def to_first_person_reflection(reason: str, title: str = "") -> str:
+    """Transform editorial or analyst reasons into a genuine first-person tactical reflection."""
+    r = reason.strip()
+    if not r:
+        return "Para mí, la clave está en no quedarse solo en la teoría y aplicar esto con método para ver resultados tangibles."
+
+    # Check if already written in first person
+    if re.search(r"\b(yo|mi\b|mis\b|creo|siento|he aprendido|pienso|para m[ií]|me di cuenta|me hizo|siempre he)\b", r, re.IGNORECASE):
+        return r
+
+    # Strip editorial meta-analysis endings
+    r_clean = re.sub(
+        r",?\s*(?:generando|lo que genera|ideal para|lo que hace que|haciendo que|dejando una lección|con alto potencial|creando identificaci[oó]n|para captar).*$",
+        "",
+        r,
+        flags=re.IGNORECASE,
+    ).strip().rstrip(".")
+
+    # Remove leading third person verb if present
+    opener_match = re.match(
+        r"^(?:Expone|Muestra|Explica|Enseña|Aborda|Destaca|Describe|Detalla|Presenta|Revela|Refleja|Demuestra|Ofrece)\s+(.*)$",
+        r_clean,
+        re.IGNORECASE,
+    )
+    rest = opener_match.group(1).strip() if opener_match else r_clean
+    formatted_rest = (rest[0].lower() + rest[1:]) if len(rest) > 1 else rest
+
+    if re.search(r"^(?:un|una|el|la)\s+(?:dolor|problema|error|riesgo|caos|falla|descuadre)", formatted_rest, re.IGNORECASE):
+        return f"Para mí, esto toca un punto crítico: {formatted_rest}. Si no atacas la raíz de esto a tiempo, terminas perdiendo recursos valiosos y frenando el crecimiento de tu operación."
+
+    if re.search(r"^(?:un|una|el|la)\s+(?:cambio|giro|oportunidad|lecci[oó]n|método|forma|estrategia|hack|secreto)", formatted_rest, re.IGNORECASE):
+        return f"Para mí, el verdadero valor de este momento es {formatted_rest}. Aplicar este enfoque en la práctica te ahorra semanas de ensayo y error, y eleva la calidad de tus resultados."
+
+    return f"Mi conclusión sobre esto es directa: {formatted_rest}. Tener claridad sobre este principio y aplicarlo con método es lo que realmente marca la diferencia en los resultados."
+
+
 def ensure_caption_attribution(
     clip: ClipCandidate,
     video_title: str | None = None,
@@ -454,14 +496,15 @@ def ensure_caption_attribution(
 ) -> None:
     """Ensure that the clip's caption has a reflection and mentions the source video and channel."""
     text = (clip.caption or clip.title or "").strip()
-    has_reflection = "reflexión" in text.lower() or "💡" in text
-    has_video = "📌" in text or "video:" in text.lower()
-    has_channel = "🎙" in text or "canal:" in text.lower()
+    has_reflection = bool(re.search(r'(?:^|\s)(?:💡\s*)?reflexi[oó]n:', text, re.IGNORECASE))
+    has_video = bool(re.search(r'(?:^|\n)\s*📌\s*video:', text, re.IGNORECASE))
+    has_channel = bool(re.search(r'(?:^|\n)\s*🎙\s*canal:', text, re.IGNORECASE))
 
     blocks: list[str] = [text] if text else []
 
     if not has_reflection and clip.reason:
-        blocks.append(f"💡 Reflexión: {clip.reason.strip()}")
+        fp_reflection = to_first_person_reflection(clip.reason, clip.title)
+        blocks.append(f"💡 Reflexión: {fp_reflection}")
 
     if not text or (not text.endswith("?") and not text.endswith("👇") and "opinas" not in text.lower() and "¿" not in text):
         blocks.append("¿Qué opinas tú de esto? ¡Déjamelo saber en los comentarios! 👇")
