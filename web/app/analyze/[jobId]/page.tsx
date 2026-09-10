@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -171,6 +171,18 @@ export default function AnalyzePage({
   const videoId = job?.video_id || extractYouTubeId(videoUrl);
   const isDone = job?.status === "done";
   const isError = job?.status === "error" || !!error;
+
+  const orderedClipsWithIndex = useMemo(() => {
+    const list = clips.map((clip, originalIndex) => ({ clip, originalIndex }));
+    if (activeClipIdx !== null && activeClipIdx >= 0 && activeClipIdx < list.length) {
+      const activeIdx = list.findIndex((it) => it.originalIndex === activeClipIdx);
+      if (activeIdx > 0) {
+        const [activeItem] = list.splice(activeIdx, 1);
+        list.unshift(activeItem);
+      }
+    }
+    return list;
+  }, [clips, activeClipIdx]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -544,13 +556,13 @@ export default function AnalyzePage({
                   </div>
                 ) : (
                   <div className={styles.clipsList}>
-                    {clips.map((clip, idx) => (
+                    {orderedClipsWithIndex.map(({ clip, originalIndex }) => (
                       <ClipCard
-                        key={idx}
+                        key={clip.id ?? originalIndex}
                         clip={clip}
-                        index={idx}
-                        isActive={activeClipIdx === idx}
-                        onJump={(s) => handleJump(s, idx)}
+                        index={originalIndex}
+                        isActive={activeClipIdx === originalIndex}
+                        onJump={(s) => handleJump(s, originalIndex)}
                         videoId={videoId ?? undefined}
                         videoUrl={videoUrl}
                         videoTitle={job?.video_title}

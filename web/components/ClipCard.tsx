@@ -387,6 +387,16 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
         className={`${styles.card} ${isActive ? styles.cardActive : ""}`}
         id={`clip-card-${index}`}
       >
+        {isActive && (
+          <div className={styles.activeBanner}>
+            <div className={styles.activeBadgeLeft}>
+              <span className={styles.activePulseDot} />
+              <span className={styles.activeBadgeText}>REPRODUCIENDO AHORA</span>
+              <span className={styles.activeBadgeTime}>⏱ {formatTime(startSec)} – {formatTime(endSec)}</span>
+            </div>
+            <span className={styles.activeSelectedTag}>🎯 Seleccionado</span>
+          </div>
+        )}
         <div className={styles.mainRow}>
           {/* Circular Index Badge */}
           <div className={styles.indexBadge}>{index + 1}</div>

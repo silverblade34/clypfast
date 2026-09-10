@@ -670,6 +670,19 @@ async def get_render_status(render_id: str) -> dict[str, Any]:
     return job
 
 
+@app.post("/clips/render-cancel/{render_id}")
+async def cancel_render_clip(render_id: str) -> dict[str, Any]:
+    """Cancel an active render job."""
+    with _render_jobs_lock:
+        job = _render_jobs.get(render_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Render job no encontrado")
+        job["status"] = "cancelled"
+        job["step_label"] = "Renderizado cancelado por el usuario"
+    return {"ok": True, "render_id": render_id, "message": "Renderizado cancelado exitosamente"}
+
+
+
 @app.get("/clips/download/{filename}")
 async def download_clip_file(filename: str) -> FileResponse:
     """Download the processed clip MP4 directly."""

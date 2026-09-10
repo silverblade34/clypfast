@@ -297,6 +297,7 @@ export default function ClipCustomizerModal({
   const [renderLabel, setRenderLabel] = useState("");
   const [renderSuccess, setRenderSuccess] = useState(false);
   const [renderError, setRenderError] = useState("");
+  const [activeRenderId, setActiveRenderId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Cleanup del polling ──────────────────────────────────────
@@ -307,13 +308,44 @@ export default function ClipCustomizerModal({
   }, []);
 
   // ── Cerrar con Escape ────────────────────────────────────────
+  const handleCancelRender = async () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    const idToCancel = activeRenderId;
+    setActiveRenderId(null);
+    setIsRendering(false);
+    setRenderProgress(0);
+    setRenderLabel("");
+
+    if (idToCancel) {
+      try {
+        await fetch(`/api/clips/render-cancel/${idToCancel}`, { method: "POST" });
+      } catch {}
+    }
+  };
+
+  const handleCloseModal = () => {
+    if (isRendering) {
+      if (confirm("Hay un renderizado en curso. ¿Deseas cancelarlo y cerrar?")) {
+        handleCancelRender();
+        onClose();
+      }
+    } else {
+      onClose();
+    }
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isRendering) onClose();
+      if (e.key === "Escape") {
+        handleCloseModal();
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [isRendering, onClose]);
+  }, [isRendering, activeRenderId, onClose]);
 
   // ── Trim rápido ──────────────────────────────────────────────
   const adjustStart = useCallback((delta: number) => {
@@ -375,6 +407,7 @@ export default function ClipCustomizerModal({
 
       if (!res.ok) throw new Error("Error al iniciar el renderizado.");
       const { render_id } = await res.json();
+      setActiveRenderId(render_id);
 
       pollRef.current = setInterval(async () => {
         try {
@@ -387,6 +420,7 @@ export default function ClipCustomizerModal({
           if (data.status === "done") {
             if (pollRef.current) clearInterval(pollRef.current);
             setIsRendering(false);
+            setActiveRenderId(null);
             setRenderSuccess(true);
             onExportDone?.(subTheme !== "none" ? "subtitulado" : "enfoque_generado");
 
@@ -398,10 +432,13 @@ export default function ClipCustomizerModal({
             a.remove();
 
             setTimeout(() => setRenderSuccess(false), 5000);
-          } else if (data.status === "error") {
+          } else if (data.status === "error" || data.status === "cancelled") {
             if (pollRef.current) clearInterval(pollRef.current);
             setIsRendering(false);
-            setRenderError(data.error ?? "Error al procesar.");
+            setActiveRenderId(null);
+            if (data.status === "error") {
+              setRenderError(data.error ?? "Error al procesar.");
+            }
           }
         } catch {
           // polling silencioso
@@ -409,6 +446,7 @@ export default function ClipCustomizerModal({
       }, 1000);
     } catch (err: unknown) {
       setIsRendering(false);
+      setActiveRenderId(null);
       setRenderError(err instanceof Error ? err.message : "Error desconocido.");
     }
   };
@@ -443,8 +481,7 @@ export default function ClipCustomizerModal({
           </div>
           <button
             className={styles.closeBtn}
-            onClick={onClose}
-            disabled={isRendering}
+            onClick={handleCloseModal}
             aria-label="Cerrar"
           >
             <X size={15} />
@@ -1072,6 +1109,19 @@ export default function ClipCustomizerModal({
             <div className={styles.errorBadge} title={renderError}>
               {renderError}
             </div>
+          )}
+
+          {isRendering && (
+            <button
+              type="button"
+              className={styles.cancelBtn}
+              onClick={handleCancelRender}
+              title="Cancelar renderizado y cambiar configuración"
+              id="cancel-render-btn"
+            >
+              <X size={14} />
+              <span>Cancelar</span>
+            </button>
           )}
 
           <button

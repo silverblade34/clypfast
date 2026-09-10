@@ -24,11 +24,99 @@
 }
 
 .cardActive {
-  background: rgba(15, 23, 42, 0.95) !important;
-  border-color: rgba(56, 189, 248, 0.5) !important;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25),
-    0 8px 30px rgba(56, 189, 248, 0.12) !important;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(13, 17, 28, 0.95) 60%, rgba(167, 139, 250, 0.08) 100%) !important;
+  border: 1.5px solid #38bdf8 !important;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4),
+    0 8px 32px rgba(56, 189, 248, 0.22),
+    inset 0 0 24px rgba(56, 189, 248, 0.06) !important;
+  transform: translateY(-2px);
+  position: relative;
 }
+
+.cardActive::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 24px;
+  right: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #22d3ee, #a78bfa, transparent);
+  border-radius: 99px;
+}
+
+.cardActive .indexBadge {
+  background: linear-gradient(135deg, #22d3ee, #0284c7) !important;
+  border-color: #38bdf8 !important;
+  color: #05050d !important;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.6) !important;
+  font-weight: 800 !important;
+}
+
+.cardActive .title {
+  color: #ffffff !important;
+  text-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+}
+
+.cardActive .thumbWrapper {
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.35) !important;
+}
+
+/* Active Banner */
+.activeBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.16) 0%, rgba(167, 139, 250, 0.12) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  margin-bottom: 2px;
+}
+
+.activeBadgeLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activePulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 8px #22d3ee, 0 0 16px #22d3ee;
+  animation: activeDotPulse 1.5s infinite ease-in-out;
+}
+
+@keyframes activeDotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.5; }
+}
+
+.activeBadgeText {
+  font-size: 11px;
+  font-weight: 800;
+  color: #38bdf8;
+  letter-spacing: 0.05em;
+}
+
+.activeBadgeTime {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+.activeSelectedTag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(34, 211, 238, 0.18);
+  color: #22d3ee;
+  border: 1px solid rgba(34, 211, 238, 0.4);
+}
+
 
 /* ── MAIN ROW: index + thumbnail + content ── */
 .mainRow {

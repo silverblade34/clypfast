@@ -73,7 +73,7 @@ export default function DbAnalyzePage({
   const [clips, setClips] = useState<Clip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeClipIdx, setActiveClipIdx] = useState<number | null>(null);
+  const [activeClipId, setActiveClipId] = useState<number | null>(null);
   const [playerTime, setPlayerTime] = useState(0);
   const [sortBy, setSortBy] = useState<"score" | "time" | "duration">("score");
   const [copiedShare, setCopiedShare] = useState(false);
@@ -127,21 +127,33 @@ export default function DbAnalyzePage({
   }, []);
 
   // ── Jump to clip ────────────────────────────────────────────────────────────
-  function handleJump(startSeconds: number, idx?: number) {
+  function handleJump(startSeconds: number, clipOrIdx?: Clip | number) {
     try {
       playerRef.current?.seekTo(startSeconds);
     } catch {}
     setPlayerTime(startSeconds);
-    if (idx !== undefined) {
-      setActiveClipIdx(idx);
+    if (clipOrIdx !== undefined) {
+      if (typeof clipOrIdx === "object") {
+        setActiveClipId(clipOrIdx.id ?? null);
+      } else if (typeof clipOrIdx === "number") {
+        const found = clips[clipOrIdx];
+        if (found?.id) setActiveClipId(found.id);
+      }
     }
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 
-  // ── Sort Clips ─────────────────────────────────────────────────────────────
-  const sortedClips = useMemo(() => {
+  // ── Timeline active index ──────────────────────────────────────────────────
+  const activeTimelineIndex = useMemo(() => {
+    if (activeClipId === null) return null;
+    const idx = clips.findIndex((c) => c.id === activeClipId);
+    return idx >= 0 ? idx : null;
+  }, [clips, activeClipId]);
+
+  // ── Sort Clips & Position Active Clip at Top ───────────────────────────────
+  const sortedClipsWithOrder = useMemo(() => {
     const list = [...clips];
     if (sortBy === "score") {
       list.sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -150,8 +162,23 @@ export default function DbAnalyzePage({
     } else if (sortBy === "duration") {
       list.sort((a, b) => (b.end_seconds - b.start_seconds) - (a.end_seconds - a.start_seconds));
     }
-    return list;
-  }, [clips, sortBy]);
+
+    const items = list.map((clip, originalIndex) => ({
+      clip,
+      originalIndex,
+    }));
+
+    // Ubicar el clip seleccionado arriba de todo
+    if (activeClipId !== null) {
+      const activeIdx = items.findIndex((it) => it.clip.id === activeClipId);
+      if (activeIdx > 0) {
+        const [activeItem] = items.splice(activeIdx, 1);
+        items.unshift(activeItem);
+      }
+    }
+
+    return items;
+  }, [clips, sortBy, activeClipId]);
 
   const handleShare = () => {
     if (typeof window !== "undefined") {
@@ -455,7 +482,7 @@ export default function DbAnalyzePage({
                   duration={video.duration_seconds || 300}
                   currentTime={playerTime}
                   clips={clips}
-                  activeClipIndex={activeClipIdx}
+                  activeClipIndex={activeTimelineIndex}
                   onJump={handleJump}
                   videoId={youtubeVideoId}
                   dbVideoId={video.id}
@@ -497,20 +524,20 @@ export default function DbAnalyzePage({
                 </div>
 
                 {/* Clips List */}
-                {sortedClips.length === 0 ? (
+                {sortedClipsWithOrder.length === 0 ? (
                   <div className={`${styles.emptyClips} glass-card`}>
                     <span style={{ fontSize: "32px" }}>📂</span>
                     <p>No se encontraron clips guardados para este video.</p>
                   </div>
                 ) : (
                   <div className={styles.clipsList}>
-                    {sortedClips.map((clip, i) => (
+                    {sortedClipsWithOrder.map(({ clip, originalIndex }) => (
                       <ClipCard
-                        key={clip.id ?? i}
+                        key={clip.id ?? originalIndex}
                         clip={clip}
-                        index={i}
-                        isActive={activeClipIdx === i}
-                        onJump={(s) => handleJump(s, i)}
+                        index={originalIndex}
+                        isActive={activeClipId !== null && clip.id === activeClipId}
+                        onJump={(s) => handleJump(s, clip)}
                         videoId={youtubeVideoId ?? undefined}
                         videoUrl={video.source_url ?? undefined}
                         videoTitle={video.title}
