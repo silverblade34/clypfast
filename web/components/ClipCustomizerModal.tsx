@@ -15,6 +15,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   Download,
@@ -187,6 +188,18 @@ export default function ClipCustomizerModal({
   onClose,
   onExportDone,
 }: Props) {
+  // ── Portal y Scroll lock ─────────────────────────────────────
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, []);
+
   // ── Estado: Tiempos ──────────────────────────────────────────
   const [startSec, setStartSec] = useState(clip.start_seconds);
   const [endSec, setEndSec] = useState(clip.end_seconds);
@@ -462,8 +475,20 @@ export default function ClipCustomizerModal({
   const subsBottomPct = `${(marginV / 1920) * 100}%`;
 
   /* ─── Render ────────────────────────────────────────────────── */
-  return (
-    <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Personalizar clip">
+  if (!mounted || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className={styles.overlay}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Personalizar clip"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleCloseModal();
+        }
+      }}
+    >
       <div className={styles.panel}>
 
         {/* HEADER */}
@@ -1144,6 +1169,7 @@ export default function ClipCustomizerModal({
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
