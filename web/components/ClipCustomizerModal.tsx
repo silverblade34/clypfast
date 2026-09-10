@@ -35,6 +35,7 @@ import {
   Columns2,
   Tv,
   Film,
+  Clock,
 } from "lucide-react";
 import type { Clip } from "./ClipCard";
 import { extractYouTubeId } from "./ClipCard";
@@ -208,6 +209,8 @@ export default function ClipCustomizerModal({
 
   // ── Vista previa visual del clip / miniatura ─────────────────
   const effectiveVideoId = videoId || extractYouTubeId(videoUrl) || extractYouTubeId(clip.video_source_url);
+  const targetVideoUrl = videoUrl || (effectiveVideoId ? `https://www.youtube.com/watch?v=${effectiveVideoId}` : clip.video_source_url);
+
   const initialThumb = effectiveVideoId
     ? `https://img.youtube.com/vi/${effectiveVideoId}/hqdefault.jpg`
     : clip.id
@@ -216,11 +219,43 @@ export default function ClipCustomizerModal({
 
   const [thumbSrc, setThumbSrc] = useState<string | null>(initialThumb);
   const [hasThumbError, setHasThumbError] = useState(false);
+  const [isExactFrame, setIsExactFrame] = useState(false);
+  const [loadingExactFrame, setLoadingExactFrame] = useState(false);
 
+  // Carga asíncrona del fotograma exacto correspondiente al segundo de inicio (startSec)
   useEffect(() => {
-    setThumbSrc(initialThumb);
-    setHasThumbError(false);
-  }, [initialThumb]);
+    let active = true;
+    const exactEndpoint = clip.id
+      ? `/api/clips/${clip.id}/thumbnail?time=${Math.floor(startSec)}`
+      : targetVideoUrl
+      ? `/api/clips/frame-thumbnail?url=${encodeURIComponent(targetVideoUrl)}&time=${Math.floor(startSec)}`
+      : null;
+
+    if (!exactEndpoint) return;
+
+    setLoadingExactFrame(true);
+
+    // Pre-cargar la imagen en memoria para un intercambio limpio sin parpadeo
+    const img = new Image();
+    img.src = exactEndpoint;
+    img.onload = () => {
+      if (active) {
+        setThumbSrc(exactEndpoint);
+        setIsExactFrame(true);
+        setLoadingExactFrame(false);
+        setHasThumbError(false);
+      }
+    };
+    img.onerror = () => {
+      if (active) {
+        setLoadingExactFrame(false);
+      }
+    };
+
+    return () => {
+      active = false;
+    };
+  }, [clip.id, startSec, targetVideoUrl]);
 
   const handleThumbError = () => {
     if (effectiveVideoId && thumbSrc?.includes("hqdefault")) {
@@ -424,6 +459,16 @@ export default function ClipCustomizerModal({
 
             {/* Visor 9:16 */}
             <div className={styles.videoWrap}>
+              {/* Badge con segundo exacto del fotograma */}
+              <div
+                className={styles.frameTimestampBadge}
+                title={isExactFrame ? `Fotograma exacto en ${formatSec(startSec)}` : `Cargando segundo ${formatSec(startSec)}...`}
+              >
+                <Clock size={10} />
+                <span>{formatSec(startSec)}</span>
+                {loadingExactFrame && <Loader size={9} className={styles.spinIcon} />}
+              </div>
+
               {/* Vista previa visual con fotograma/miniatura según formato seleccionado */}
               <div className={styles.previewCanvas}>
                 {thumbSrc && !hasThumbError ? (

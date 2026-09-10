@@ -16,3 +16,22 @@ export async function GET(
     return NextResponse.json({ detail: "Error conectando con el servidor" }, { status: 503 });
   }
 }
+
+/** DELETE /api/videos/[id] → Elimina el video y sus archivos asociados */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const res = await fetch(`${FASTAPI_URL}/videos/${id}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json({ detail: "Error conectando con el servidor" }, { status: 503 });
+  }
+}
+

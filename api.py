@@ -794,6 +794,228 @@ async def get_video(video_id: int) -> dict[str, Any]:
         }
 
 
+@app.delete("/videos/{video_id}")
+async def delete_video(video_id: int) -> dict[str, Any]:
+    """Delete a video and all associated clips, rendered MP4s, transcripts, and thumbnails from disk and DB."""
+    import shutil
+    from sqlmodel import Session, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video, Clip
+    from clipfinder.downloader import get_source_id
+
+    freed_bytes = 0
+    deleted_files = 0
+
+    with Session(engine) as session:
+        v = session.get(Video, video_id)
+        if not v:
+            raise HTTPException(status_code=404, detail="Video no encontrado")
+
+        source = v.source_url or v.source_path or ""
+        source_id = get_source_id(source) if source else None
+
+        # 1. Delete all rendered clip mp4 files belonging to this video
+        clips = session.exec(select(Clip).where(Clip.video_id == video_id)).all()
+        for clip in clips:
+            if clip.output_path:
+                clip_path = Path(clip.output_path)
+                if clip_path.exists() and clip_path.is_file():
+                    try:
+                        freed_bytes += clip_path.stat().st_size
+                        clip_path.unlink()
+                        deleted_files += 1
+                    except Exception as e:
+                        logger.warning("Could not delete clip file %s: %s", clip_path, e)
+
+            # Delete clip thumbnail
+            thumbs_dir = Path("outputs/thumbs")
+            if thumbs_dir.exists():
+                for th in thumbs_dir.glob(f"thumb_{clip.id}_*.jpg"):
+                    try:
+                        freed_bytes += th.stat().st_size
+                        th.unlink()
+                        deleted_files += 1
+                    except Exception:
+                        pass
+
+        # 2. Delete video thumbnail in thumbs
+        thumbs_dir = Path("outputs/thumbs")
+        if thumbs_dir.exists():
+            for th in thumbs_dir.glob(f"vid_{video_id}_*.jpg"):
+                try:
+                    freed_bytes += th.stat().st_size
+                    th.unlink()
+                    deleted_files += 1
+                except Exception:
+                    pass
+
+        # 3. Check if any OTHER video in the DB uses the same source_id
+        if source_id:
+            other_videos = session.exec(select(Video).where(Video.id != video_id)).all()
+            other_uses_same_source = any(
+                get_source_id(ov.source_url or ov.source_path or "") == source_id
+                for ov in other_videos
+            )
+
+            if not other_uses_same_source:
+                # Safe to delete the entire analysis folder outputs/{source_id}
+                src_dir = Path("outputs") / source_id
+                if src_dir.exists() and src_dir.is_dir():
+                    for f in src_dir.rglob("*"):
+                        if f.is_file():
+                            freed_bytes += f.stat().st_size
+                            deleted_files += 1
+                    try:
+                        shutil.rmtree(src_dir)
+                    except Exception as e:
+                        logger.warning("Could not delete folder %s: %s", src_dir, e)
+
+                # Also delete frame thumbnails for this source_id
+                if thumbs_dir.exists():
+                    for th in thumbs_dir.glob(f"frame_{source_id}_*.jpg"):
+                        try:
+                            freed_bytes += th.stat().st_size
+                            th.unlink()
+                            deleted_files += 1
+                        except Exception:
+                            pass
+
+        # 4. Delete the video from database (cascades to clips)
+        session.delete(v)
+        session.commit()
+
+    return {
+        "ok": True,
+        "video_id": video_id,
+        "freed_bytes": freed_bytes,
+        "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+        "deleted_files": deleted_files,
+        "message": f"Video y {deleted_files} archivos eliminados exitosamente ({round(freed_bytes / (1024 * 1024), 1)} MB liberados)",
+    }
+
+
+@app.get("/storage")
+async def get_storage_stats() -> dict[str, Any]:
+    """Return storage footprint of outputs directory broken down by category, and detect orphaned files."""
+    from sqlmodel import Session, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+    from clipfinder.downloader import get_source_id
+
+    outputs_dir = Path("outputs")
+    if not outputs_dir.exists():
+        return {
+            "total_bytes": 0,
+            "total_mb": 0.0,
+            "clips_mb": 0.0,
+            "thumbs_mb": 0.0,
+            "data_mb": 0.0,
+            "orphaned_mb": 0.0,
+            "orphaned_count": 0,
+            "orphaned_folders": [],
+        }
+
+    with Session(engine) as session:
+        videos = session.exec(select(Video)).all()
+        active_source_ids = {
+            get_source_id(v.source_url or v.source_path or "")
+            for v in videos
+            if (v.source_url or v.source_path)
+        }
+
+    total_bytes = 0
+    clips_bytes = 0
+    thumbs_bytes = 0
+    data_bytes = 0
+    orphaned_bytes = 0
+    orphaned_folders = []
+
+    clips_dir = outputs_dir / "clips"
+    if clips_dir.exists():
+        for f in clips_dir.iterdir():
+            if f.is_file():
+                sz = f.stat().st_size
+                clips_bytes += sz
+                total_bytes += sz
+
+    thumbs_dir = outputs_dir / "thumbs"
+    if thumbs_dir.exists():
+        for f in thumbs_dir.iterdir():
+            if f.is_file():
+                sz = f.stat().st_size
+                thumbs_bytes += sz
+                total_bytes += sz
+
+    for p in outputs_dir.iterdir():
+        if p.is_dir() and p.name not in ("clips", "thumbs", "__pycache__"):
+            dir_size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+            total_bytes += dir_size
+            data_bytes += dir_size
+            if p.name not in active_source_ids:
+                orphaned_bytes += dir_size
+                orphaned_folders.append({
+                    "folder": p.name,
+                    "bytes": dir_size,
+                    "mb": round(dir_size / (1024 * 1024), 2)
+                })
+
+    return {
+        "total_bytes": total_bytes,
+        "total_mb": round(total_bytes / (1024 * 1024), 2),
+        "clips_mb": round(clips_bytes / (1024 * 1024), 2),
+        "thumbs_mb": round(thumbs_bytes / (1024 * 1024), 2),
+        "data_mb": round(data_bytes / (1024 * 1024), 2),
+        "orphaned_mb": round(orphaned_bytes / (1024 * 1024), 2),
+        "orphaned_count": len(orphaned_folders),
+        "orphaned_folders": orphaned_folders,
+    }
+
+
+@app.post("/storage/clean-orphans")
+async def clean_orphaned_storage() -> dict[str, Any]:
+    """Delete leftover folders or temp files in outputs/ that belong to no active video in the database."""
+    import shutil
+    from sqlmodel import Session, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video
+    from clipfinder.downloader import get_source_id
+
+    outputs_dir = Path("outputs")
+    if not outputs_dir.exists():
+        return {"freed_bytes": 0, "freed_mb": 0.0, "deleted_folders": []}
+
+    with Session(engine) as session:
+        videos = session.exec(select(Video)).all()
+        active_source_ids = {
+            get_source_id(v.source_url or v.source_path or "")
+            for v in videos
+            if (v.source_url or v.source_path)
+        }
+
+    freed_bytes = 0
+    deleted_folders = []
+
+    for p in outputs_dir.iterdir():
+        if p.is_dir() and p.name not in ("clips", "thumbs", "__pycache__"):
+            if p.name not in active_source_ids:
+                dir_sz = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                try:
+                    shutil.rmtree(p)
+                    freed_bytes += dir_sz
+                    deleted_folders.append(p.name)
+                except Exception as e:
+                    logger.warning("Could not remove orphan folder %s: %s", p, e)
+
+    return {
+        "ok": True,
+        "freed_bytes": freed_bytes,
+        "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+        "deleted_folders": deleted_folders,
+        "message": f"Se liberaron {round(freed_bytes / (1024 * 1024), 1)} MB de {len(deleted_folders)} carpetas huérfanas.",
+    }
+
+
+
 @app.get("/videos/{video_id}/clips")
 async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
     """Get all clips belonging to a video."""
@@ -913,9 +1135,11 @@ async def get_video_transcript(
                             "text": " ".join(kept_words),
                         })
             else:
-                filtered_segs.append(s)
+                s_copy = dict(s)
+                s_copy["text"] = s_text
+                filtered_segs.append(s_copy)
 
-        full_text = " ".join(s.get("text", "").strip() for s in filtered_segs if s.get("text"))
+        full_text = " ".join(str(s.get("text", "")).strip() for s in filtered_segs if str(s.get("text", "")).strip())
         return {
             "video_id": video_id,
             "start_seconds": start_seconds,
@@ -1066,8 +1290,8 @@ def _get_cached_stream_url(source_url: str) -> str | None:
 
 
 @app.get("/clips/{clip_id}/thumbnail")
-async def get_clip_thumbnail(clip_id: int):
-    """Return an exact video frame thumbnail at start_seconds for this clip."""
+async def get_clip_thumbnail(clip_id: int, time: float | None = None):
+    """Return an exact video frame thumbnail at start_seconds or specified time for this clip."""
     import subprocess
     from sqlmodel import Session
     from clipfinder.db import engine
@@ -1083,7 +1307,7 @@ async def get_clip_thumbnail(clip_id: int):
         clip = session.get(Clip, clip_id)
         if not clip:
             raise HTTPException(status_code=404, detail="Clip no encontrado")
-        start_sec = clip.start_seconds
+        start_sec = time if time is not None else clip.start_seconds
         if clip.video:
             source_url = clip.video.source_url
             source_path = clip.video.source_path
@@ -1103,17 +1327,69 @@ async def get_clip_thumbnail(clip_id: int):
         if source_path and Path(source_path).exists():
             cmd = [
                 "ffmpeg", "-y", "-ss", str(start_sec), "-i", str(source_path),
-                "-vframes", "1", "-vf", "scale=320:-1", "-q:v", "3", str(thumb_path)
+                "-vframes", "1", "-vf", "scale=640:-1", "-q:v", "3", str(thumb_path)
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
             if thumb_path.exists() and thumb_path.stat().st_size > 500:
                 return FileResponse(str(thumb_path), media_type="image/jpeg")
+        elif source_url:
+            stream_url = _get_cached_stream_url(source_url)
+            if isinstance(stream_url, str):
+                cmd = [
+                    "ffmpeg", "-y", "-ss", str(start_sec), "-i", stream_url,
+                    "-vframes", "1", "-vf", "scale=640:-1", "-q:v", "3", str(thumb_path)
+                ]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
+                if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                    return FileResponse(str(thumb_path), media_type="image/jpeg")
     except Exception as exc:
-        logger.warning(f"Error generating thumbnail for local clip {clip_id}: {exc}")
+        logger.warning(f"Error generating thumbnail for clip {clip_id} at {start_sec}s: {exc}")
 
-    # For YouTube videos, immediately redirect to Google CDN (instant 20ms, zero server load)
     if yt_id:
-        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg", status_code=302)
+        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", status_code=302)
+    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+
+
+@app.get("/thumbnail/frame")
+async def get_frame_thumbnail_by_url(url: str, time: float = 0.0):
+    """Extract and return exact video frame thumbnail at specific timestamp for any URL or local path."""
+    import subprocess
+    from clipfinder.downloader import _extract_video_id, get_source_id, is_url
+
+    yt_id = _extract_video_id(url) if is_url(url) else None
+    cache_key = yt_id if yt_id else get_source_id(url)
+
+    thumbs_dir = Path("outputs/thumbs")
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    thumb_path = thumbs_dir / f"frame_{cache_key}_{int(time)}.jpg"
+
+    if thumb_path.exists() and thumb_path.stat().st_size > 500:
+        return FileResponse(str(thumb_path), media_type="image/jpeg")
+
+    try:
+        if not is_url(url) and Path(url).exists():
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(time), "-i", url,
+                "-vframes", "1", "-vf", "scale=640:-1", "-q:v", "3", str(thumb_path)
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+            if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                return FileResponse(str(thumb_path), media_type="image/jpeg")
+        elif is_url(url):
+            stream_url = _get_cached_stream_url(url)
+            if isinstance(stream_url, str):
+                cmd = [
+                    "ffmpeg", "-y", "-ss", str(time), "-i", stream_url,
+                    "-vframes", "1", "-vf", "scale=640:-1", "-q:v", "3", str(thumb_path)
+                ]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
+                if thumb_path.exists() and thumb_path.stat().st_size > 500:
+                    return FileResponse(str(thumb_path), media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning(f"Error generating frame thumbnail for {url} at {time}s: {exc}")
+
+    if yt_id:
+        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", status_code=302)
     raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
 
 

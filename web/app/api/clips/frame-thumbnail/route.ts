@@ -2,17 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 
 const FASTAPI_URL = process.env.FASTAPI_URL ?? "http://localhost:8000";
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(req: NextRequest) {
   try {
-    const { id } = await params;
-    const time = req.nextUrl.searchParams.get("time");
-    const fastApiUrl = time
-      ? `${FASTAPI_URL}/clips/${id}/thumbnail?time=${encodeURIComponent(time)}`
-      : `${FASTAPI_URL}/clips/${id}/thumbnail`;
+    const url = req.nextUrl.searchParams.get("url");
+    const time = req.nextUrl.searchParams.get("time") ?? "0";
 
+    if (!url) {
+      return new NextResponse("Missing url parameter", { status: 400 });
+    }
+
+    const fastApiUrl = `${FASTAPI_URL}/thumbnail/frame?url=${encodeURIComponent(url)}&time=${encodeURIComponent(time)}`;
     const res = await fetch(fastApiUrl, {
       cache: "no-store",
       redirect: "follow",
