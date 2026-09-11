@@ -891,6 +891,47 @@ export default function ClipCustomizerModal({
                     />
                   </div>
 
+                  {/* Sugerencias de ganchos generados por Stage 2 */}
+                  {clip.alternative_hooks && clip.alternative_hooks.length > 0 && (
+                    <div className={styles.fieldRow} style={{ marginTop: "-2px", marginBottom: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "4px" }}>
+                        <span style={{ fontSize: "11px", color: "#a78bfa", fontWeight: 700 }}>
+                          ✨ Alternativas de gancho IA
+                        </span>
+                        <span style={{ fontSize: "10px", color: "#64748b" }}>
+                          (clic para aplicar)
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        {clip.alternative_hooks.map((altHook, hIdx) => {
+                          const isCur = hookText.trim() === altHook.trim();
+                          return (
+                            <button
+                              key={hIdx}
+                              type="button"
+                              onClick={() => setHookText(altHook)}
+                              style={{
+                                fontSize: "11.5px",
+                                padding: "6px 10px",
+                                borderRadius: "6px",
+                                background: isCur ? "rgba(167, 139, 250, 0.18)" : "rgba(255, 255, 255, 0.04)",
+                                border: isCur ? "1px solid rgba(167, 139, 250, 0.5)" : "1px solid rgba(255, 255, 255, 0.08)",
+                                color: isCur ? "#c4b5fd" : "#cbd5e1",
+                                cursor: "pointer",
+                                textAlign: "left",
+                                lineHeight: 1.35,
+                                transition: "all 0.15s ease",
+                              }}
+                              title="Haz clic para seleccionar este gancho"
+                            >
+                              💡 {altHook}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Hook Theme Selector */}
                   <div className={styles.fieldRow}>
                     <label className={styles.fieldLabel}>Plantilla del título</label>

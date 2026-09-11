@@ -83,7 +83,10 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
         from clipfinder.subtitles import fetch_youtube_subtitles
         from clipfinder.groq_whisper import transcribe_with_groq
         from clipfinder.transcriber import transcribe
-        from clipfinder.analyzer import GEMINI_MODELS, GROQ_MODELS, analyze_segments, chunk_segments
+        from clipfinder.analyzer import (
+            GEMINI_MODELS, GROQ_MODELS, analyze_segments, chunk_segments,
+            enrich_clip_social_content,
+        )
         from clipfinder.models import AnalysisResult
         from clipfinder.report import save_all
 
@@ -326,7 +329,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
         _update_job(
             job_id,
             step="analyze_done",
-            progress=90,
+            progress=88,
             clips_found_so_far=len(clips),
             live_clips=[
                 {
@@ -335,13 +338,14 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     "start_seconds": c.start_seconds,
                     "end_seconds": c.end_seconds,
                     "reason": c.reason,
+                    "stage2_done": False,
                 }
                 for c in clips
             ],
         )
 
         # ── Step 4: Save reports ─────────────────────────────────────────────
-        _update_job(job_id, step="saving", step_label="Guardando reportes...", progress=92)
+        _update_job(job_id, step="saving", step_label="Guardando reportes...", progress=89)
 
         whisper_model_label = (
             "YouTube Subtitles" if method_used == "youtube_subs"
@@ -360,9 +364,10 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
         )
         save_all(result, segments, output_dir)
 
-        # ── Persist in SQLite Database (Agency phase) ─────────────────────────
+        # ── Persist in SQLite Database ────────────────────────────────────────
         db_video_id: int | None = None
         clips_data: list[dict[str, Any]] = []
+        db_clip_ids: list[int | None] = []
         try:
             from sqlmodel import Session
             from clipfinder.db import engine
@@ -395,6 +400,9 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                         status=ClipStatus.prospecto,
                         caption=cand.caption,
                         hashtags=cand.hashtags_str if hasattr(cand, "hashtags_str") else str(cand.hashtags or ""),
+                        core_idea=cand.core_idea,
+                        surface_topic=cand.surface_topic,
+                        stage2_done=False,
                     )
                     db_session.add(db_clip)
                     db_session.commit()
@@ -404,9 +412,115 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     cand_dict["id"] = db_clip.id
                     cand_dict["status"] = db_clip.status.value
                     clips_data.append(cand_dict)
+                    db_clip_ids.append(db_clip.id)
         except Exception as db_err:
             logger.warning("Error persisting to database: %s", db_err)
             clips_data = [c.model_dump() for c in clips]
+            db_clip_ids = [None] * len(clips)
+
+        # ── Step 5: Stage 2 — Social Content Enrichment ───────────────────────
+        _update_job(
+            job_id,
+            step="enrich",
+            step_label=f"Generando contenido social (IA Stage 2) para {len(clips)} clips...",
+            progress=90,
+        )
+
+        for clip_idx, (cand, db_clip_id) in enumerate(zip(clips, db_clip_ids), 1):
+            try:
+                _update_job(
+                    job_id,
+                    step_label=(
+                        f"Stage 2: analizando clip {clip_idx}/{len(clips)} "
+                        f"({cand.title[:40]}...)..."
+                        if len(cand.title) > 40 else
+                        f"Stage 2: analizando clip {clip_idx}/{len(clips)} ({cand.title})..."
+                    ),
+                    progress=90 + int((clip_idx - 1) / len(clips) * 7),
+                )
+
+                enrich_clip_social_content(
+                    clip=cand,
+                    all_segments=segments,
+                    provider=req.provider,  # type: ignore[arg-type]
+                    api_key=api_key,
+                    model=model_name,
+                    video_title=video_title,
+                    video_channel=video_channel,
+                )
+
+                # Update clips_data entry with enriched data
+                for cd in clips_data:
+                    if cd.get("id") == db_clip_id:
+                        cd.update({
+                            "title": cand.title,
+                            "caption": cand.caption,
+                            "hook": cand.hook,
+                            "alternative_hooks": cand.alternative_hooks,
+                            "core_idea": cand.core_idea,
+                            "surface_topic": cand.surface_topic,
+                            "hidden_angle": cand.hidden_angle,
+                            "quote": cand.quote,
+                            "social_description": cand.social_description,
+                            "engagement_question": cand.engagement_question,
+                            "social_score": cand.social_score,
+                            "stage2_done": True,
+                        })
+                        break
+
+                # Persist Stage 2 results to DB
+                if db_clip_id:
+                    try:
+                        import json as _json
+                        from datetime import datetime, timezone
+                        from sqlmodel import Session
+                        from clipfinder.db import engine
+                        from clipfinder.models import Clip
+
+                        with Session(engine) as db_session:
+                            db_clip = db_session.get(Clip, db_clip_id)
+                            if db_clip:
+                                db_clip.title = cand.title
+                                db_clip.caption = cand.caption
+                                db_clip.hashtags = cand.hashtags_str if hasattr(cand, "hashtags_str") else str(cand.hashtags or "")
+                                db_clip.core_idea = cand.core_idea
+                                db_clip.surface_topic = cand.surface_topic
+                                db_clip.hidden_angle = cand.hidden_angle
+                                db_clip.hook = cand.hook
+                                db_clip.quote = cand.quote
+                                db_clip.social_description = cand.social_description
+                                db_clip.engagement_question = cand.engagement_question
+                                db_clip.social_score = cand.social_score
+                                db_clip.alternative_hooks = _json.dumps(cand.alternative_hooks or [], ensure_ascii=False)
+                                db_clip.stage2_done = True
+                                db_clip.updated_at = datetime.now(timezone.utc)
+                                db_session.add(db_clip)
+                                db_session.commit()
+                    except Exception as db2_err:
+                        logger.warning("Error persisting Stage 2 to DB for clip %s: %s", db_clip_id, db2_err)
+
+                # Notify frontend with updated live clips
+                _update_job(
+                    job_id,
+                    live_clips=[
+                        {
+                            "title": c.title,
+                            "score": c.score,
+                            "start_seconds": c.start_seconds,
+                            "end_seconds": c.end_seconds,
+                            "reason": c.reason,
+                            "stage2_done": c.stage2_done,
+                            "hook": c.hook,
+                            "alternative_hooks": c.alternative_hooks,
+                            "core_idea": c.core_idea,
+                            "hidden_angle": c.hidden_angle,
+                            "engagement_question": c.engagement_question,
+                        }
+                        for c in clips
+                    ],
+                )
+            except Exception as enrich_err:
+                logger.warning("Stage 2 failed for clip %d: %s", clip_idx, enrich_err)
 
         # Clean up audio for YouTube downloads
         if audio_path and is_url(req.url) and audio_path.exists() and audio_path.name == "audio.wav":
@@ -1048,6 +1162,11 @@ async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for c in clips:
             d = c.model_dump()
+            if isinstance(d.get("alternative_hooks"), str):
+                try:
+                    d["alternative_hooks"] = json.loads(d["alternative_hooks"])
+                except Exception:
+                    d["alternative_hooks"] = []
             d["video_title"] = v_title
             d["video_channel"] = v_channel
             d["video_source_url"] = v_url
@@ -1182,6 +1301,157 @@ async def get_clip_transcript(clip_id: int) -> dict[str, Any]:
         )
 
 
+@app.post("/clips/{clip_id}/enrich")
+async def enrich_clip(clip_id: int) -> dict[str, Any]:
+    """
+    Trigger Stage 2 Social Content Analysis for an existing clip.
+    Useful for re-generating hooks/descriptions without re-processing the full video.
+    Returns immediately; enrichment runs in the background.
+    """
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Clip, Video
+
+    with Session(engine) as session:
+        clip = session.get(Clip, clip_id)
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip no encontrado")
+        video = session.get(Video, clip.video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video asociado no encontrado")
+
+        clip_data = clip.model_dump()
+        video_data = video.model_dump()
+
+    enrich_id = str(uuid.uuid4())
+
+    with _render_jobs_lock:
+        _render_jobs[enrich_id] = {
+            "status": "running",
+            "progress": 5,
+            "step_label": f"Iniciando Stage 2 para clip #{clip_id}...",
+            "clip_id": clip_id,
+            "error": None,
+        }
+
+    def _run_enrich(enrich_id: str, clip_data: dict, video_data: dict) -> None:
+        try:
+            import json as _json
+            from datetime import datetime, timezone
+            from clipfinder.analyzer import enrich_clip_social_content
+            from clipfinder.models import ClipCandidate, TranscriptSegment
+            from clipfinder.downloader import get_source_id
+            from sqlmodel import Session
+            from clipfinder.db import engine
+            from clipfinder.models import Clip
+
+            _update_render_job(enrich_id, progress=10, step_label="Cargando transcripción del video...")
+
+            # Load transcript from disk
+            source = video_data.get("source_url") or video_data.get("source_path") or ""
+            source_id = get_source_id(source) if source else ""
+            transcript_file = Path("outputs") / source_id / "transcript.json"
+
+            segments: list[TranscriptSegment] = []
+            if transcript_file.exists():
+                try:
+                    raw_segs = _json.loads(transcript_file.read_text(encoding="utf-8"))
+                    segments = [
+                        TranscriptSegment(
+                            text=str(s.get("text", "")).strip(),
+                            start=float(s.get("start", 0)),
+                            end=float(s.get("end", 0)),
+                        )
+                        for s in raw_segs
+                        if str(s.get("text", "")).strip()
+                    ]
+                except Exception as tr_err:
+                    logger.warning("Stage 2 enrich: could not load transcript: %s", tr_err)
+
+            if not segments:
+                _update_render_job(enrich_id, status="error", error="No se encontró transcripción para este video.")
+                return
+
+            # Reconstruct ClipCandidate from DB data
+            cand = ClipCandidate(
+                start_seconds=float(clip_data["start_seconds"]),
+                end_seconds=float(clip_data["end_seconds"]),
+                title=str(clip_data.get("title", "")),
+                reason=str(clip_data.get("reason", "")),
+                score=int(clip_data.get("score", 7)),
+                caption=clip_data.get("caption"),
+                core_idea=clip_data.get("core_idea"),
+                surface_topic=clip_data.get("surface_topic"),
+            )
+
+            _update_render_job(enrich_id, progress=20, step_label="Analizando con IA Stage 2...")
+
+            provider_name = str(video_data.get("provider") or "groq")
+            env_key = "GROQ_API_KEY" if provider_name == "groq" else "GEMINI_API_KEY"
+            api_key = os.getenv(env_key)
+            if not api_key:
+                _update_render_job(enrich_id, status="error", error=f"Missing {env_key}")
+                return
+
+            enrich_clip_social_content(
+                clip=cand,
+                all_segments=segments,
+                provider=provider_name,  # type: ignore[arg-type]
+                api_key=api_key,
+                model=video_data.get("llm_model") or None,
+                video_title=video_data.get("title"),
+                video_channel=video_data.get("channel"),
+            )
+
+            # Save Stage 2 results to DB
+            with Session(engine) as db_session:
+                db_clip = db_session.get(Clip, clip_data["id"])
+                if db_clip:
+                    db_clip.title = cand.title
+                    db_clip.caption = cand.caption
+                    db_clip.hashtags = cand.hashtags_str if hasattr(cand, "hashtags_str") else str(cand.hashtags or "")
+                    db_clip.core_idea = cand.core_idea
+                    db_clip.surface_topic = cand.surface_topic
+                    db_clip.hidden_angle = cand.hidden_angle
+                    db_clip.hook = cand.hook
+                    db_clip.quote = cand.quote
+                    db_clip.social_description = cand.social_description
+                    db_clip.engagement_question = cand.engagement_question
+                    db_clip.social_score = cand.social_score
+                    db_clip.alternative_hooks = _json.dumps(cand.alternative_hooks or [], ensure_ascii=False)
+                    db_clip.stage2_done = True
+                    db_clip.updated_at = datetime.now(timezone.utc)
+                    db_session.add(db_clip)
+                    db_session.commit()
+
+            _update_render_job(
+                enrich_id,
+                status="done",
+                progress=100,
+                step_label="¡Stage 2 completado!",
+                clip_id=clip_data["id"],
+                result={
+                    "hook": cand.hook,
+                    "alternative_hooks": cand.alternative_hooks,
+                    "core_idea": cand.core_idea,
+                    "hidden_angle": cand.hidden_angle,
+                    "social_description": cand.social_description,
+                    "engagement_question": cand.engagement_question,
+                    "social_score": cand.social_score,
+                },
+            )
+        except Exception as exc:
+            _update_render_job(enrich_id, status="error", error=str(exc)[:300])
+
+    thread = threading.Thread(
+        target=_run_enrich,
+        args=(enrich_id, clip_data, video_data),
+        daemon=True,
+        name=f"enrich-{enrich_id[:8]}",
+    )
+    thread.start()
+
+    return {"enrich_id": enrich_id, "clip_id": clip_id, "status": "running"}
 
 
 class UpdateClipRequest(BaseModel):
@@ -1252,6 +1522,11 @@ async def filter_clips(status: str | None = None, cliente: str | None = None) ->
         results: list[dict[str, Any]] = []
         for c in clips:
             c_dict = c.model_dump()
+            if isinstance(c_dict.get("alternative_hooks"), str):
+                try:
+                    c_dict["alternative_hooks"] = json.loads(c_dict["alternative_hooks"])
+                except Exception:
+                    c_dict["alternative_hooks"] = []
             if c.video:
                 c_dict["video_source"] = c.video.source_url or c.video.source_path
                 c_dict["cliente"] = c.video.cliente

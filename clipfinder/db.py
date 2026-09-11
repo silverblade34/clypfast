@@ -35,6 +35,30 @@ def init_db() -> None:
     except Exception:
         pass
 
+    # Safe migration: add Stage 2 social content columns to clip table if missing
+    _CLIP_MIGRATIONS = [
+        ("core_idea", "VARCHAR"),
+        ("surface_topic", "VARCHAR"),
+        ("hidden_angle", "VARCHAR"),
+        ("hook", "VARCHAR"),
+        ("quote", "VARCHAR"),
+        ("social_description", "VARCHAR"),
+        ("engagement_question", "VARCHAR"),
+        ("alternative_hooks", "VARCHAR"),  # JSON-encoded list
+        ("social_score", "INTEGER"),
+        ("stage2_done", "BOOLEAN DEFAULT 0"),
+    ]
+    try:
+        with engine.connect() as conn:
+            clip_cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(clip)").fetchall()]
+            for col_name, col_type in _CLIP_MIGRATIONS:
+                if col_name not in clip_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE clip ADD COLUMN {col_name} {col_type}")
+            conn.commit()
+    except Exception:
+        pass
+
+
 
 def get_session() -> Generator[Session, None, None]:
     """FastAPI session dependency."""

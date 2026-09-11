@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable
 from typing import Literal
 
-from clipfinder.models import ClipCandidate, LLMClipsResponse, TranscriptSegment
+from clipfinder.models import ClipCandidate, LLMClipsResponse, LLMSocialContentResponse, TranscriptSegment
 
 LLMProvider = Literal["groq", "gemini"]
 
@@ -86,62 +86,186 @@ CONTENT_TYPE_PROMPTS: dict[str, str] = {
     ),
 }
 
+# ── Stage 1: Clip Detection Prompts ─────────────────────────────────────────
+
 SYSTEM_PROMPT = """\
-Eres un editor de video experto en contenido viral para TikTok, Instagram Reels y YouTube Shorts.
-Tienes años de experiencia identificando qué momentos de un video largo se convierten en clips virales.
-Tu análisis es preciso, honesto y orientado a resultados reales."""
+Eres un detector experto de momentos virales en videos largos para TikTok, Instagram Reels y YouTube Shorts.
+Tu único objetivo en esta etapa es encontrar QUÉ fragmentos del video valen la pena convertir en clip.
+No te preocupes por el título definitivo ni por el contenido social: eso es trabajo de otra IA.
+Tu tarea es identificar con precisión los momentos más potentes, con timestamps exactos, contexto claro y un score honesto."""
 
 USER_PROMPT_TEMPLATE = """\
-Analiza la siguiente transcripción con timestamps y detecta exactamente {max_clips} momentos \
+Analiza la siguiente transcripción con timestamps y detecta exactamente {max_clips} fragmentos \
 con mayor potencial viral para TikTok/Reels/Shorts.
 
-DATOS DEL VIDEO DE ORIGEN:
-- Título del video: {video_title}
+DATOS DEL VIDEO:
+- Título: {video_title}
 - Canal / Creador: {video_channel}
 
 {content_criteria}
 
-EVITAR: transiciones vagas, introducciones genéricas, despedidas, silencio o relleno sin sustancia.
+EVITAR: introducciones genéricas, despedidas, silencios, transiciones sin contenido, relleno.
 
-REGLA CRÍTICA DE DURACIÓN (OBLIGATORIA):
-- DURACIÓN MÍNIMA: 20 segundos. DURACIÓN MÁXIMA: 90 segundos (Ideal: 30 a 60 segundos).
-- ESTÁ ESTRICTAMENTE PROHIBIDO generar clips de menos de 15 segundos (como 1s, 2s, 5s o 10s).
-- NUNCA selecciones una sola línea o frase aislada de subtítulo. Cada clip DEBE contener una idea, historia, debate o explicación COMPLETA con gancho (hook), desarrollo y remate.
-- Asegúrate de que (end_seconds - start_seconds) >= 20.
+REGLA CRÍTICA DE DURACIÓN:
+- DURACIÓN MÍNIMA: 20 segundos. DURACIÓN MÁXIMA: 90 segundos. Ideal: 30 a 60 segundos.
+- NUNCA selecciones una sola frase aislada. Cada clip debe contener una idea completa con contexto, desarrollo y cierre.
+- Verifica que (end_seconds - start_seconds) >= 20.
 
-REGLA CRÍTICA DE TIMESTAMPS (OBLIGATORIA):
+REGLA CRÍTICA DE TIMESTAMPS:
 - Cada línea de la transcripción tiene su tiempo real entre corchetes, ej: "[34:15 - 35:02] ...".
-- "start_seconds" y "end_seconds" DEBEN ser los timestamps EXACTOS del video copiados de la transcripción.
-- Puedes escribir "start_seconds" y "end_seconds" en formato "MM:SS" (por ejemplo "34:15" y "35:02") o en segundos totales (ej. 2055 y 2102).
-- ESTÁ ESTRICTAMENTE PROHIBIDO usar tiempos relativos (como "00:15" o "00:31" cuando el texto dice "[34:15]"). Debe ser el timestamp real del video completo.
+- "start_seconds" y "end_seconds" deben ser los timestamps EXACTOS de la transcripción.
+- Puedes usar formato "MM:SS" o segundos totales.
+- PROHIBIDO usar tiempos relativos (ej. "00:15" cuando el texto dice "[34:15]").
 
-REGLA CRÍTICA PARA LA DESCRIPCIÓN DEL POST ("caption"):
-El campo "caption" es la descripción completa del post lista para publicar en redes sociales (TikTok / Instagram Reels / YouTube Shorts / LinkedIn).
-DEBE seguir obligatoriamente esta estructura de 4 bloques:
-1. Gancho inicial: 1 frase llamativa o intrigante en primera línea que atrape de inmediato.
-2. Pequeña reflexión inspiracional (EN PRIMERA PERSONA OBLIGATORIA):
-   - DEBE estar redactada en PRIMERA PERSONA ("yo", "siento", "he aprendido", "para mí", "creo firmemente", "siempre he creído"), como si tú fueras el creador del post compartiendo tu opinión personal, profunda e inspiracional tras ver este momento.
-   - Da un toque reflexivo, humano y motivador que conecte emocionalmente con quien lo lee.
-   - Debe iniciar obligatoriamente con: "💡 Reflexión: ..."
-   - ESTÁ ESTRICTAMENTE PROHIBIDO redactar en tercera persona o como crítico/analista editorial (NO uses "El clip expone...", "El video muestra...", "Explica cómo...", "Muestra que..."). Exprésate SIEMPRE en primera persona:
-     * "💡 Reflexión: Para mí, esto nos recuerda que el verdadero éxito no llega por casualidad, sino por atreverte a mantener el rumbo cuando todo parece complicado."
-     * "💡 Reflexión: Siempre he creído que la mayor ventaja que puedes tener es la capacidad de adaptarte y aprender rápido, sin miedo a empezar de cero."
-3. Pregunta o llamado a la acción (CTA) para invitar a la audiencia a compartir su punto de vista.
-4. Mención obligatoria de la fuente:
-   📌 Video: {video_title}
-   🎙 Canal: {video_channel}
+PARA CADA CLIP, IDENTIFICA:
+- El fragmento exacto con sus timestamps reales
+- La idea central del clip (qué afirma, explica o revela el hablante)
+- El tema superficial visible
+- El argumento o afirmación principal
+- El momento más potente del fragmento (la frase o revelación clave)
+- Por qué tiene potencial viral (honesto, específico)
+- Un título de trabajo provisional de 1 a 8 palabras (es solo interno, no el título final)
+- Un score del 1 al 10
 
-Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
-{{"clips": [{{"start_seconds": "MM:SS", "end_seconds": "MM:SS", "title": "Título del clip", "reason": "Por qué es viral", "score": 8, "caption": "Gancho inicial\\n\\n💡 Reflexión: Para mí, esto me deja una lección muy clara...\\n\\n¿Qué opinas tú de esto? ¡Comenta abajo! 👇\\n\\n📌 Video: {video_title}\\n🎙 Canal: {video_channel}", "hashtags": ["#tema1", "#tema2", "#tema3", "#tema4", "#tema5"]}}]}}
+Responde ÚNICAMENTE con JSON válido con esta estructura exacta:
+{{"clips": [
+  {{
+    "start_seconds": "MM:SS",
+    "end_seconds": "MM:SS",
+    "title": "Título provisional 1-8 palabras",
+    "core_idea": "La idea profunda o argumento real del clip en 1-2 oraciones",
+    "surface_topic": "El tema superficial visible en el clip",
+    "key_argument": "La afirmación o argumento principal del hablante",
+    "strongest_moment": "La frase o revelación más potente del fragmento",
+    "reason": "Por qué este fragmento tiene potencial viral (específico)",
+    "score": 8
+  }}
+]}}
 
-- "title": máximo 60 caracteres, en el mismo idioma del video
-- "reason": 1-2 oraciones explicando el potencial viral específico
-- "score": entero del 1 al 10 (10 = viral garantizado)
-- "caption": descripción completa en primera persona con gancho, reflexión inspiracional personal, CTA y mención del video y canal
-- "hashtags": lista de 5 a 8 hashtags altamente relevantes para el clip
+NOTA: Los campos "core_idea", "surface_topic", "key_argument" y "strongest_moment" son opcionales en el JSON \
+pero muy valorados. Si el modelo los omite, el parsing seguirá funcionando correctamente.
 
 Transcripción:
 {transcript}"""
+
+
+# ── Stage 2: Social Content Analysis Prompts ─────────────────────────────────
+
+STAGE2_SYSTEM_PROMPT = """\
+Eres un editor de contenido viral para TikTok, Instagram Reels y YouTube Shorts.
+Sabes exactamente cuál es la diferencia entre un buen fragmento de video y un buen clip para redes.
+Tu especialidad es encontrar el ángulo más interesante dentro de un fragmento y convertirlo en contenido que detenga el scroll.
+Nunca te quedas con el tema superficial. Siempre buscas la contradicción, la consecuencia oculta o la pregunta implícita que el propio clip puede responder.
+Escribes con lenguaje concreto, directo y humano. Jamás usas frases genéricas de IA."""
+
+STAGE2_USER_PROMPT_TEMPLATE = """\
+Analiza el siguiente fragmento de video y genera el mejor contenido social posible para publicarlo en TikTok/Reels/Shorts.
+
+INFORMACIÓN DEL VIDEO ORIGINAL:
+- Título: {video_title}
+- Canal / Creador: {video_channel}
+- Tema general del video: {surface_topic}
+- Idea central detectada (Stage 1): {core_idea}
+
+TRANSCRIPCIÓN COMPLETA DEL FRAGMENTO ({start_time} – {end_time}):
+{transcript}
+
+---
+
+ANTES DE ESCRIBIR NADA, HAZ ESTE ANÁLISIS INTERNO OBLIGATORIO:
+
+1. ¿Cuál es el TEMA SUPERFICIAL del clip? (Lo que parece ser a primera vista)
+2. ¿Cuál es REALMENTE la idea central? (Lo que el hablante está argumentando de fondo)
+3. ¿Qué ejemplo concreto del clip ilustra mejor esa idea? (Una situación, dato o caso específico mencionado)
+4. ¿Existe una CONTRADICCIÓN? (Dos cosas que se oponen o que parecen incompatibles)
+5. ¿Existe una CONSECUENCIA INESPERADA? (Algo que pasa como resultado que no es obvio)
+6. ¿Qué parte haría decir al espectador "¿cómo así?" o "¿en serio?" (El punto más sorprendente)
+7. ¿Qué PREGUNTA queda implícita y el propio clip la responde? (La que debería estar en el título)
+8. ¿Qué título entendería alguien que no conoce el contexto del video? (Sin jerga interna)
+
+---
+
+GENERACIÓN DE HOOKS:
+
+Con base en ese análisis, genera INTERNAMENTE entre 5 y 10 candidatos de hook (título/frase gancho para TikTok).
+Luego evalúa cada uno según estos criterios:
+- Hook: ¿Detiene el scroll en menos de 2 segundos?
+- Curiosidad: ¿Hace querer escuchar la explicación?
+- Fidelidad: ¿El clip realmente responde lo que promete el título?
+- Claridad: ¿Se entiende inmediatamente sin contexto previo?
+- Naturalidad: ¿Parece escrito por una persona, no por una IA?
+- Especificidad: Si el mismo título pudiera usarse en 100 videos distintos, penalízalo fuertemente.
+
+Fórmulas que puedes explorar (úsalas para disparar ideas, no mecánicamente):
+- Contradicción: "Ser pobre también significa pagar más."
+- Consecuencia oculta: "La inseguridad también te hace ganar menos."
+- Pregunta: "¿Por qué ser pobre termina saliendo más caro?"
+- Dato/ejemplo: "Tres pasajes solo para conseguir una cita."
+- Causa → consecuencia: "Cierras antes por miedo. También ganas menos."
+- Romper creencia: "La pobreza no es solamente ganar poco."
+
+REGLAS DE ORO PARA EL HOOK GANADOR:
+- Entre 6 y 14 palabras. Legible en menos de 2 segundos.
+- Sin tono académico, periodístico o de ensayo.
+- PROHIBIDO: "El peligroso mito de...", "La importancia de...", "Análisis sobre...", "El impacto de..."
+- El título debe ABRIR una pregunta que el clip pueda CERRAR.
+- 100% honesto: lo que promete el título, el clip lo cumple.
+
+SELECCIONA:
+- El hook ganador → campo "hook"
+- Los 3 mejores runners-up → campo "alternative_hooks" (lista de 3)
+
+---
+
+DESCRIPCIÓN PARA REDES SOCIALES:
+
+Escribe una descripción con esta estructura OBLIGATORIA:
+1. HOOK: La misma frase del hook o una variante directa (1 línea, gancho inmediato)
+2. EJEMPLO CONCRETO: Describe brevemente el ejemplo o caso específico del clip que mejor ilustra la idea.
+   Usa hechos, no paráfrasis genéricas. Ejemplo real: "Ir 3 veces por una cita = 3 pasajes. Cerrar antes por inseguridad = menos horas trabajando."
+3. IDEA DEL CLIP: La conclusión o idea de fondo en 1-2 oraciones. Concreta, no poética.
+4. REFLEXIÓN BREVE (OPCIONAL): Si hay algo genuinamente reflexivo que añadir, una sola oración en primera persona.
+   Si no hay nada que añadir sin sonar genérico, OMÍTELA. No pongas reflexión de relleno.
+5. PREGUNTA CTA: Una pregunta directa y específica que genere comentarios sobre el tema concreto del clip.
+6. FUENTE:
+   📌 {video_title}
+   🎙 {video_channel}
+
+PROHIBIDO en la descripción (frases genéricas de IA que matan la personalidad):
+- "una cadena que asfixia los sueños"
+- "quienes buscan ganarse la vida honradamente"
+- "en un mundo donde..."
+- "esto nos invita a reflexionar"
+- "una problemática que afecta a miles"
+- "el esfuerzo diario de quienes..."
+- "una realidad que pocos quieren ver"
+- Cualquier frase que pudiera servir para 100 videos distintos
+
+PRINCIPIO: Concreto > Poético. Un hecho específico del clip tiene más impacto que cualquier metáfora genérica.
+
+---
+
+HASHTAGS: Entre 5 y 8, altamente relevantes para el tema específico del clip (no genéricos como #viral #contenido).
+
+PREGUNTA DE ENGAGEMENT: Una pregunta directa, específica y basada en el contenido real del clip.
+Ejemplo malo: "¿Qué opinas de este tema?"
+Ejemplo bueno: "¿Habías pensado que la inseguridad también te hace perder ingresos?"
+
+---
+
+Responde ÚNICAMENTE con JSON válido con esta estructura exacta:
+{{
+  "core_idea": "La idea profunda real del clip (puede diferir de la detectada en Stage 1 si encuentras algo mejor)",
+  "surface_topic": "El tema superficial",
+  "hidden_angle": "El ángulo más potente e inesperado que encontraste",
+  "hook": "El título/hook TikTok ganador (6-14 palabras)",
+  "alternative_hooks": ["Hook alternativo 1", "Hook alternativo 2", "Hook alternativo 3"],
+  "quote": "La frase más memorable del clip (textual si es posible, parafraseada si es necesario)",
+  "social_description": "Descripción completa con estructura HOOK→EJEMPLO→IDEA→REFLEXIÓN(opcional)→PREGUNTA CTA→FUENTE",
+  "hashtags": ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5"],
+  "engagement_question": "Pregunta específica y concreta para generar comentarios",
+  "social_score": 8
+}}"""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -302,7 +426,7 @@ def _generate_fallback_clips(
     return fallbacks
 
 
-# ── LLM Callers ───────────────────────────────────────────────────────────────
+# ── LLM Callers — Stage 1 ─────────────────────────────────────────────────────
 
 
 def _call_groq(
@@ -314,7 +438,7 @@ def _call_groq(
     video_title: str = "Video original",
     video_channel: str = "Canal de origen",
 ) -> list[ClipCandidate]:
-    """Call the Groq API and parse the response."""
+    """Call the Groq API for Stage 1 clip detection and parse the response."""
     from groq import Groq
 
     client = Groq(api_key=api_key)
@@ -333,7 +457,7 @@ def _call_groq(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.25,
+        temperature=0.2,
         max_tokens=4096,
     )
 
@@ -351,7 +475,7 @@ def _call_gemini(
     video_title: str = "Video original",
     video_channel: str = "Canal de origen",
 ) -> list[ClipCandidate]:
-    """Call the Google Gemini API and parse the response."""
+    """Call the Google Gemini API for Stage 1 clip detection and parse the response."""
     import google.generativeai as genai
 
     genai.configure(api_key=api_key)  # pyright: ignore[reportPrivateImportUsage]
@@ -372,7 +496,7 @@ def _call_gemini(
     response = gem.generate_content(
         prompt,
         generation_config={
-            "temperature": 0.25,
+            "temperature": 0.2,
             "max_output_tokens": 4096,
             "response_mime_type": "application/json",
         },
@@ -380,6 +504,92 @@ def _call_gemini(
 
     raw = _extract_json(response.text)
     return LLMClipsResponse(**raw).clips
+
+
+# ── LLM Callers — Stage 2 ─────────────────────────────────────────────────────
+
+
+def _call_groq_stage2(
+    transcript: str,
+    model: str,
+    api_key: str,
+    video_title: str = "Video original",
+    video_channel: str = "Canal de origen",
+    core_idea: str = "",
+    surface_topic: str = "",
+    start_time: str = "00:00",
+    end_time: str = "00:00",
+) -> LLMSocialContentResponse:
+    """Call the Groq API for Stage 2 social content analysis of a single clip."""
+    from groq import Groq
+
+    client = Groq(api_key=api_key)
+    prompt = STAGE2_USER_PROMPT_TEMPLATE.format(
+        video_title=video_title or "Video original",
+        video_channel=video_channel or "Canal de origen",
+        core_idea=core_idea or "(pendiente de análisis)",
+        surface_topic=surface_topic or "(pendiente de análisis)",
+        start_time=start_time,
+        end_time=end_time,
+        transcript=transcript,
+    )
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": STAGE2_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.6,   # Higher temperature for more creative hook generation
+        max_tokens=2048,
+    )
+
+    content = response.choices[0].message.content or ""
+    raw = _extract_json(content)
+    return LLMSocialContentResponse(**raw)
+
+
+def _call_gemini_stage2(
+    transcript: str,
+    model: str,
+    api_key: str,
+    video_title: str = "Video original",
+    video_channel: str = "Canal de origen",
+    core_idea: str = "",
+    surface_topic: str = "",
+    start_time: str = "00:00",
+    end_time: str = "00:00",
+) -> LLMSocialContentResponse:
+    """Call the Gemini API for Stage 2 social content analysis of a single clip."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)  # pyright: ignore[reportPrivateImportUsage]
+    gem = genai.GenerativeModel(  # pyright: ignore[reportPrivateImportUsage]
+        model_name=model,
+        system_instruction=STAGE2_SYSTEM_PROMPT,
+    )
+
+    prompt = STAGE2_USER_PROMPT_TEMPLATE.format(
+        video_title=video_title or "Video original",
+        video_channel=video_channel or "Canal de origen",
+        core_idea=core_idea or "(pendiente de análisis)",
+        surface_topic=surface_topic or "(pendiente de análisis)",
+        start_time=start_time,
+        end_time=end_time,
+        transcript=transcript,
+    )
+
+    response = gem.generate_content(
+        prompt,
+        generation_config={
+            "temperature": 0.6,
+            "max_output_tokens": 2048,
+            "response_mime_type": "application/json",
+        },
+    )
+
+    raw = _extract_json(response.text)
+    return LLMSocialContentResponse(**raw)
 
 
 # ── Deduplication ─────────────────────────────────────────────────────────────
@@ -644,3 +854,115 @@ def analyze_segments(
         ensure_caption_attribution(c, video_title=video_title, video_channel=video_channel)
 
     return all_clips[:max_clips]
+
+
+# ── Stage 2: Public Enrichment API ────────────────────────────────────────────
+
+
+def get_clip_segments(
+    clip: ClipCandidate,
+    all_segments: list[TranscriptSegment],
+    context_seconds: float = 10.0,
+) -> list[TranscriptSegment]:
+    """
+    Extract transcript segments that fall within a clip's time window,
+    with optional context padding before and after.
+    """
+    start = max(0.0, clip.start_seconds - context_seconds)
+    end = clip.end_seconds + context_seconds
+    return [s for s in all_segments if s.end > start and s.start < end]
+
+
+def enrich_clip_social_content(
+    clip: ClipCandidate,
+    all_segments: list[TranscriptSegment],
+    provider: LLMProvider,
+    api_key: str,
+    model: str | None = None,
+    video_title: str | None = None,
+    video_channel: str | None = None,
+    context_seconds: float = 10.0,
+) -> ClipCandidate:
+    """
+    Stage 2: Analyze a single clip's transcript and generate optimized social content.
+
+    Uses the full transcript of the clip (+ optional context padding) to find the
+    most interesting angle, generate hook candidates, select the winner, and produce
+    a concrete social description.
+
+    Mutates the clip in place and returns it.
+
+    Args:
+        clip:             The ClipCandidate to enrich (mutated in place).
+        all_segments:     Full transcript segments of the video.
+        provider:         'groq' or 'gemini'.
+        api_key:          API key for the chosen provider.
+        model:            Specific model name, or None for provider default.
+        video_title:      Original video title for context and attribution.
+        video_channel:    Original video channel for context and attribution.
+        context_seconds:  Seconds of transcript to include before/after the clip.
+
+    Returns:
+        The same ClipCandidate, with Stage 2 fields populated.
+    """
+    # Resolve model
+    if model is None:
+        model = GROQ_MODELS["default"] if provider == "groq" else GEMINI_MODELS["default"]
+
+    v_title = (video_title or "Video original").strip()
+    v_chan = (video_channel or "Canal de origen").strip()
+
+    # Extract clip transcript (with context padding)
+    clip_segs = get_clip_segments(clip, all_segments, context_seconds=context_seconds)
+    if not clip_segs:
+        # Fallback: just use any segments near the clip
+        clip_segs = [
+            s for s in all_segments
+            if s.end > clip.start_seconds and s.start < clip.end_seconds
+        ]
+
+    transcript_text = format_segments(clip_segs)
+    start_time = _fmt(clip.start_seconds)
+    end_time = _fmt(clip.end_seconds)
+
+    # Call Stage 2 LLM
+    caller2 = _call_groq_stage2 if provider == "groq" else _call_gemini_stage2
+    result = caller2(
+        transcript=transcript_text,
+        model=model,
+        api_key=api_key,
+        video_title=v_title,
+        video_channel=v_chan,
+        core_idea=clip.core_idea or clip.reason or "",
+        surface_topic=clip.surface_topic or "",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    # Apply Stage 2 results to clip
+    clip.core_idea = result.core_idea
+    clip.surface_topic = result.surface_topic
+    clip.hidden_angle = result.hidden_angle
+    clip.hook = result.hook
+    clip.alternative_hooks = result.alternative_hooks
+    clip.quote = result.quote
+    clip.social_description = result.social_description
+    clip.engagement_question = result.engagement_question
+    clip.social_score = result.social_score
+    clip.stage2_done = True
+
+    # Update hashtags if Stage 2 provides them (more specific)
+    if result.hashtags:
+        clip.hashtags = result.hashtags
+
+    # Promote hook → title (backward compat: title field always holds best hook)
+    clip.title = result.hook
+
+    # Promote social_description → caption with attribution check
+    if result.social_description:
+        clip.caption = result.social_description
+        # Ensure source attribution is present
+        ensure_caption_attribution(clip, video_title=video_title, video_channel=video_channel)
+
+    return clip
+

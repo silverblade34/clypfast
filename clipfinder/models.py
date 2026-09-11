@@ -56,6 +56,18 @@ class Clip(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 
+    # ── Stage 2: Social Content fields (added via migration if not present) ────
+    core_idea: Optional[str] = Field(default=None)
+    surface_topic: Optional[str] = Field(default=None)
+    hidden_angle: Optional[str] = Field(default=None)
+    hook: Optional[str] = Field(default=None)
+    quote: Optional[str] = Field(default=None)
+    social_description: Optional[str] = Field(default=None)
+    engagement_question: Optional[str] = Field(default=None)
+    alternative_hooks: Optional[str] = Field(default=None)  # JSON-encoded list
+    social_score: Optional[int] = Field(default=None)
+    stage2_done: bool = Field(default=False)
+
     video: Optional[Video] = Relationship(back_populates="clips")
 
 
@@ -87,6 +99,19 @@ class ClipCandidate(BaseModel):
     caption: Optional[str] = None
     hashtags: Optional[Union[List[str], str]] = None
 
+    # ── Stage 2: Social Content Analysis fields ───────────────────────────────
+    # Populated by enrich_clip_social_content() after Stage 1 detection.
+    core_idea: Optional[str] = None          # The deep idea of the clip (beyond the surface topic)
+    surface_topic: Optional[str] = None      # The obvious/superficial topic
+    hidden_angle: Optional[str] = None       # The most interesting unexpected angle
+    hook: Optional[str] = None               # The winning TikTok hook/title (6-14 words)
+    alternative_hooks: Optional[List[str]] = None  # Runner-up hook candidates
+    quote: Optional[str] = None              # Most memorable quote/sentence from the clip
+    social_description: Optional[str] = None  # Full post description: HOOK→EXAMPLE→IDEA→REFLECTION→CTA
+    engagement_question: Optional[str] = None  # Concrete question to drive comments
+    social_score: Optional[int] = None       # Stage 2 virality re-evaluation (1-10)
+    stage2_done: bool = False                # Flag: True once Stage 2 has processed this clip
+
     @field_validator("score", mode="before")
     @classmethod
     def parse_score(cls, v: Any) -> int:
@@ -94,6 +119,16 @@ class ClipCandidate(BaseModel):
             return max(1, min(10, int(round(float(v)))))
         except (ValueError, TypeError):
             return 7
+
+    @field_validator("social_score", mode="before")
+    @classmethod
+    def parse_social_score(cls, v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        try:
+            return max(1, min(10, int(round(float(v)))))
+        except (ValueError, TypeError):
+            return None
 
     @field_validator("start_seconds", "end_seconds", mode="before")
     @classmethod
@@ -138,6 +173,16 @@ class ClipCandidate(BaseModel):
             return " ".join(f"#{tag.lstrip('#')}" for tag in self.hashtags)
         return str(self.hashtags or "")
 
+    @property
+    def effective_title(self) -> str:
+        """Return the best available title: hook (Stage 2) > title (Stage 1)."""
+        return (self.hook or self.title or "").strip()
+
+    @property
+    def effective_caption(self) -> str:
+        """Return the best available caption: social_description (Stage 2) > caption (Stage 1)."""
+        return (self.social_description or self.caption or "").strip()
+
 
 class AnalysisResult(BaseModel):
     """Full analysis result for a video."""
@@ -152,9 +197,32 @@ class AnalysisResult(BaseModel):
 
 
 class LLMClipsResponse(BaseModel):
-    """Expected JSON structure returned by the LLM."""
+    """Expected JSON structure returned by the LLM for Stage 1 detection."""
 
     clips: List[ClipCandidate]
+
+
+class LLMSocialContentResponse(BaseModel):
+    """Expected JSON structure returned by the LLM for Stage 2 social content analysis."""
+
+    core_idea: str
+    surface_topic: str
+    hidden_angle: str
+    hook: str
+    alternative_hooks: List[str] = []
+    quote: Optional[str] = None
+    social_description: str
+    hashtags: List[str] = []
+    engagement_question: str
+    social_score: int = 7
+
+    @field_validator("social_score", mode="before")
+    @classmethod
+    def parse_score(cls, v: Any) -> int:
+        try:
+            return max(1, min(10, int(round(float(v)))))
+        except (ValueError, TypeError):
+            return 7
 
 
 def _fmt(seconds: float) -> str:

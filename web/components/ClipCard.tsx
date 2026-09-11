@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ExternalLink, Sliders, X, Share2 } from "lucide-react";
+import { Play, Download, Pencil, MoreHorizontal, Copy, Check, ExternalLink, Sliders, X, Share2, Sparkles } from "lucide-react";
 import styles from "./ClipCard.module.css";
 import ClipCustomizerModal from "./ClipCustomizerModal";
 
@@ -20,6 +20,17 @@ export interface Clip {
   video_channel?: string;
   channel?: string;
   video_source_url?: string;
+  // Stage 2: Social Content Analysis
+  stage2_done?: boolean;
+  core_idea?: string;
+  surface_topic?: string;
+  hidden_angle?: string;
+  hook?: string;
+  alternative_hooks?: string[];
+  quote?: string;
+  social_description?: string;
+  engagement_question?: string;
+  social_score?: number;
 }
 
 interface Props {
@@ -256,6 +267,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   // Feedback
   const [copiedCopy, setCopiedCopy] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const duration = Math.round(endSec - startSec);
@@ -293,10 +305,10 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   }, [startSec, endSec]);
 
   // Extract clean hook quote, reflection and attribution
-  let quoteText = "";
+  let quoteText = clip.quote || "";
   let rawReflection = clip.reason || "";
 
-  if (clip.caption) {
+  if (!quoteText && clip.caption) {
     const cleanCap = clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim();
     const reflectionMatch = cleanCap.match(/(?:💡\s*)?[Rr]eflexi[oó]n:\s*([^📌🎙\n]+(?:\n[^📌🎙\n]+)*)/);
     if (reflectionMatch) {
@@ -313,7 +325,7 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
         quoteText = nonAttribution[0] || cleanCap;
       }
     }
-  } else if (clip.title) {
+  } else if (!quoteText && clip.title) {
     quoteText = `“${clip.title}”`;
   }
 
@@ -361,6 +373,42 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
     }
     setIsSavingTime(false);
     setIsEditingTime(false);
+  };
+
+  const handleEnrich = async () => {
+    if (!clip.id || isEnriching) return;
+    setIsEnriching(true);
+    try {
+      const res = await fetch(`/api/clips/${clip.id}/enrich`, { method: "POST" });
+      const data = await res.json();
+      if (data.render_id) {
+        const pollTimer = setInterval(async () => {
+          try {
+            const sRes = await fetch(`/api/clips/render-status/${data.render_id}`);
+            const sData = await sRes.json();
+            if (sData.status === "done") {
+              clearInterval(pollTimer);
+              setIsEnriching(false);
+              router.refresh();
+              if (typeof window !== "undefined") {
+                window.location.reload();
+              }
+            } else if (sData.status === "error") {
+              clearInterval(pollTimer);
+              setIsEnriching(false);
+              alert("Error en Stage 2: " + (sData.error || "Desconocido"));
+            }
+          } catch {
+            clearInterval(pollTimer);
+            setIsEnriching(false);
+          }
+        }, 1500);
+      } else {
+        setIsEnriching(false);
+      }
+    } catch {
+      setIsEnriching(false);
+    }
   };
 
   const getFullPostCopy = () => {
@@ -454,15 +502,38 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
 
           {/* Right Content Block */}
           <div className={styles.content}>
-            {/* Top Row: Title + Score Pill */}
+            {/* Top Row: Title + Score Pill + Stage2 badge */}
             <div className={styles.headerRow}>
               <h3 className={styles.title}>{clip.title}</h3>
-              <div
-                className={`${styles.scorePill} ${clip.score >= 9 ? styles.scorePillGold : ""}`}
-                title={`Score de viralidad estimado: ${clip.score}/10`}
-              >
-                <span>🔥</span>
-                <span>{clip.score}/10</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                {clip.stage2_done && (
+                  <div
+                    title={clip.hidden_angle ? `Ángulo IA: ${clip.hidden_angle}` : "Contenido social generado por Stage 2"}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: "#a78bfa",
+                      background: "rgba(167,139,250,0.12)",
+                      border: "1px solid rgba(167,139,250,0.3)",
+                      borderRadius: "999px",
+                      padding: "2px 8px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span>✨</span>
+                    <span>Enfoque IA</span>
+                  </div>
+                )}
+                <div
+                  className={`${styles.scorePill} ${clip.score >= 9 ? styles.scorePillGold : ""}`}
+                  title={`Score de viralidad estimado: ${clip.score}/10`}
+                >
+                  <span>🔥</span>
+                  <span>{clip.score}/10</span>
+                </div>
               </div>
             </div>
 
@@ -491,6 +562,23 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
               <p className={styles.reasonText}>
                 <span className={styles.reflectionTag}>💡 Reflexión</span>
                 {reflectionText}
+              </p>
+            )}
+
+            {/* Engagement Question (Stage 2) */}
+            {clip.engagement_question && (
+              <p className={styles.reasonText} style={{ marginTop: "4px" }}>
+                <span
+                  className={styles.reflectionTag}
+                  style={{
+                    background: "rgba(56, 189, 248, 0.12)",
+                    color: "#38bdf8",
+                    borderColor: "rgba(56, 189, 248, 0.25)",
+                  }}
+                >
+                  💬 Pregunta
+                </span>
+                {clip.engagement_question}
               </p>
             )}
 
@@ -642,6 +730,26 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                       <Sliders size={12} />
                       <span>Ajustar rango ({formatTime(startSec)} – {formatTime(endSec)})</span>
                     </button>
+                    {clip.id && (
+                      <button
+                        type="button"
+                        className={styles.dropdownItem}
+                        onClick={() => {
+                          setShowMoreMenu(false);
+                          handleEnrich();
+                        }}
+                        disabled={isEnriching}
+                      >
+                        <Sparkles size={12} color="#a78bfa" />
+                        <span>
+                          {isEnriching
+                            ? "Generando Stage 2..."
+                            : clip.stage2_done
+                            ? "Regenerar enfoque IA"
+                            : "Generar enfoque IA (Stage 2)"}
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

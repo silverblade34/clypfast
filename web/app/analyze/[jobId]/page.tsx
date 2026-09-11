@@ -41,6 +41,12 @@ interface JobData {
     start_seconds: number;
     end_seconds: number;
     reason?: string;
+    stage2_done?: boolean;
+    hook?: string;
+    alternative_hooks?: string[];
+    core_idea?: string;
+    hidden_angle?: string;
+    engagement_question?: string;
   }>;
   transcript_preview?: Array<{
     time: string;
@@ -379,29 +385,62 @@ export default function AnalyzePage({
 
                   {/* Feed Container */}
                   <div className={styles.liveFeedContent}>
-                    {job.step === "analyze" &&
+                    {(job.step === "analyze" ||
+                      job.step === "analyze_done" ||
+                      job.step === "saving" ||
+                      job.step === "enrich") &&
                     job.live_clips &&
                     job.live_clips.length > 0 ? (
                       <div className={styles.liveClipsList}>
                         <div className={styles.liveClipsCountBadge}>
                           <Sparkles size={13} />
                           <span>
-                            {job.live_clips.length} momentos candidatos
-                            detectados
+                            {job.step === "enrich"
+                              ? `Stage 2: Generando contenido social (${job.live_clips.filter((c) => c.stage2_done).length}/${job.live_clips.length})`
+                              : `${job.live_clips.length} momentos candidatos detectados`}
                           </span>
                         </div>
                         {job.live_clips.map((c, idx) => (
                           <div key={idx} className={styles.liveClipItem}>
                             <div className={styles.liveClipTop}>
-                              <span className={styles.liveClipScore}>
-                                Score {c.score}/10
-                              </span>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <span className={styles.liveClipScore}>
+                                  Score {c.score}/10
+                                </span>
+                                {c.stage2_done && (
+                                  <span
+                                    style={{
+                                      fontSize: "10px",
+                                      fontWeight: 700,
+                                      color: "#a78bfa",
+                                      background: "rgba(167,139,250,0.12)",
+                                      border: "1px solid rgba(167,139,250,0.3)",
+                                      borderRadius: "999px",
+                                      padding: "1px 6px",
+                                    }}
+                                  >
+                                    ✨ Enfoque IA
+                                  </span>
+                                )}
+                              </div>
                               <span className={styles.liveClipTime}>
                                 {formatDuration(c.start_seconds)} -{" "}
                                 {formatDuration(c.end_seconds)}
                               </span>
                             </div>
                             <p className={styles.liveClipTitle}>{c.title}</p>
+                            {c.hidden_angle && (
+                              <p
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#94a3b8",
+                                  marginTop: "3px",
+                                  lineHeight: 1.3,
+                                }}
+                              >
+                                🎯 {c.hidden_angle}
+                              </p>
+                            )}
                           </div>
                         ))}
                       </div>

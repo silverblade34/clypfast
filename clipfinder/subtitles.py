@@ -249,10 +249,13 @@ def _parse_vtt_url(url: str) -> list[TranscriptSegment] | None:
 def _group_subtitle_items(
     items: list[tuple[float, float, str]],
     target_duration: float = 6.0,
+    max_duration: float = 8.0,
 ) -> list[TranscriptSegment]:
     """
     Group small subtitle cues into coherent chunks (approx 4-8 seconds each)
-    so the LLM gets complete context instead of 1-word or 1-second cues.
+    so the LLM gets granular, accurate timestamps instead of giant collapsed blocks.
+    Auto-generated captions from YouTube lack punctuation and pauses, so max_duration
+    and word count bounds are critical to avoid multi-minute blackouts.
     """
     if not items:
         return []
@@ -261,23 +264,35 @@ def _group_subtitle_items(
     curr_start, curr_end, curr_texts = items[0][0], items[0][1], [items[0][2]]
 
     for start, end, text in items[1:]:
-        # If current chunk is long enough or there's a big pause (> 2 sec)
+        dur = curr_end - curr_start
         pause = start - curr_end
-        is_long_enough = (curr_end - curr_start) >= target_duration
         ends_sentence = curr_texts and curr_texts[-1].endswith((".", "?", "!", ":"))
 
-        if (is_long_enough and (ends_sentence or pause > 0.8)) or pause > 2.5:
+        # Flush if:
+        # 1. Punctuation at end and at least 3 seconds
+        # 2. Slight pause (>= 0.3s) and reached target duration (>= 4.5s)
+        # 3. Maximum duration reached (>= max_duration) — vital for unpunctuated auto-captions
+        # 4. Long pause (>= 1.2s) regardless of duration
+        should_flush = (
+            (dur >= 3.0 and ends_sentence)
+            or (dur >= 4.5 and pause >= 0.3)
+            or (dur >= max_duration)
+            or (pause >= 1.2)
+        )
+
+        if should_flush:
             full_text = " ".join(curr_texts).strip()
             if full_text:
+                seg_end = max(round(curr_end, 2), round(curr_start + 0.5, 2))
                 grouped.append(
                     TranscriptSegment(
                         text=full_text,
                         start=round(curr_start, 2),
-                        end=round(curr_end, 2),
+                        end=seg_end,
                     )
                 )
             curr_start = start
-            curr_end = end
+            curr_end = max(end, start + 0.5)
             curr_texts = [text]
         else:
             curr_end = max(curr_end, end)
@@ -287,11 +302,12 @@ def _group_subtitle_items(
     if curr_texts:
         full_text = " ".join(curr_texts).strip()
         if full_text:
+            seg_end = max(round(curr_end, 2), round(curr_start + 0.5, 2))
             grouped.append(
                 TranscriptSegment(
                     text=full_text,
                     start=round(curr_start, 2),
-                    end=round(curr_end, 2),
+                    end=seg_end,
                 )
             )
 

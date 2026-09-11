@@ -60,10 +60,11 @@ def download_clip_segment(
 
         range_fn: Any = download_range_func
         ydl_opts: Any = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": "bestvideo[protocol^=http]+bestaudio[protocol^=http]/bestvideo+bestaudio/best",
             "download_ranges": range_fn(None, [(start_sec, end_sec)]),
             "force_keyframes_at_cuts": True,
-            "outtmpl": str(output_path),
+            "outtmpl": str(output_path.with_suffix("")) + ".%(ext)s",
+            "merge_output_format": "mp4",
             "quiet": True,
             "no_warnings": True,
             "overwrites": True,
@@ -71,6 +72,27 @@ def download_clip_segment(
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([source])
+
+        # If yt-dlp saved as .webm, .mkv or .mp4.webm, remux cleanly to output_path
+        if not output_path.exists() or output_path.stat().st_size < 1000:
+            stem = output_path.stem
+            parent = output_path.parent
+            candidates = [
+                p for p in parent.glob(f"{stem}*")
+                if p != output_path and p.is_file() and p.stat().st_size > 1000
+            ]
+            if candidates:
+                best_file = max(candidates, key=lambda f: f.stat().st_size)
+                remux_cmd = [
+                    "ffmpeg", "-y", "-i", str(best_file),
+                    "-c", "copy",
+                    str(output_path),
+                ]
+                subprocess.run(remux_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    best_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
     else:
         # Local video file: slice using ffmpeg
         cmd = [
@@ -114,9 +136,10 @@ def crop_video_blur(
     if progress_callback:
         progress_callback(50, "Renderizando 9:16 con fondo difuminado...")
 
+    # scale=1080:-2 ensures even height (divisible by 2) required by H.264 encoders
     filter_complex = (
         "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
-        "[0:v]scale=1080:-1[fg];"
+        "[0:v]scale=1080:-2[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]"
     )
 
@@ -131,6 +154,8 @@ def crop_video_blur(
         "[outv]",
         "-map",
         "0:a?",
+        "-pix_fmt",
+        "yuv420p",
         "-c:v",
         "h264_videotoolbox",
         "-b:v",
@@ -143,12 +168,31 @@ def crop_video_blur(
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
-        # Fallback to libx264 if hardware encoder fails
-        cmd[cmd.index("h264_videotoolbox")] = "libx264"
-        cmd.remove("-b:v")
-        cmd.remove("5M")
-        cmd.extend(["-crf", "22", "-preset", "fast"])
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Fallback to libx264 if hardware encoder fails — ensure output_path is last argument!
+        cmd_fb = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(input_path),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[outv]",
+            "-map",
+            "0:a?",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "22",
+            "-preset",
+            "fast",
+            "-c:a",
+            "aac",
+            str(output_path),
+        ]
+        subprocess.run(cmd_fb, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     if progress_callback:
         progress_callback(100, "¡Renderizado vertical completado!")
@@ -336,6 +380,8 @@ def crop_video_smart(
         "0:v",
         "-map",
         "1:a?",
+        "-pix_fmt",
+        "yuv420p",
         "-c:v",
         "h264_videotoolbox",
         "-b:v",
@@ -351,11 +397,41 @@ def crop_video_smart(
         pipe_proc = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except Exception as exc:
         logger.warning("Hardware encoder failed, falling back to libx264: %s", exc)
-        pipe_cmd[pipe_cmd.index("h264_videotoolbox")] = "libx264"
-        pipe_cmd.remove("-b:v")
-        pipe_cmd.remove("6M")
-        pipe_cmd.extend(["-crf", "21", "-preset", "veryfast"])
-        pipe_proc = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        pipe_cmd_fb = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-s",
+            f"{target_w}x{target_h}",
+            "-pix_fmt",
+            "bgr24",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-i",
+            str(input_path),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a?",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "21",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(output_path),
+        ]
+        pipe_proc = subprocess.Popen(pipe_cmd_fb, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     frame_num = 0
     split_h = target_h // 2  # 960 each
@@ -505,22 +581,44 @@ def process_clip(
                 cmd.extend(["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"])
 
             cmd.extend([
-                "-c:v", "h264_videotoolbox",
-                "-b:v", "6M",
-                "-c:a", "aac",
-                "-b:a", "192k",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "h264_videotoolbox",
+                "-b:v",
+                "6M",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
                 str(output_path),
             ])
 
             try:
                 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except subprocess.CalledProcessError:
-                # Fallback to libx264
-                cmd[cmd.index("h264_videotoolbox")] = "libx264"
-                cmd.remove("-b:v")
-                cmd.remove("6M")
-                cmd.extend(["-crf", "20", "-preset", "veryfast"])
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Fallback to libx264 cleanly
+                cmd_fb = ["ffmpeg", "-y", "-i", str(temp_cropped)]
+                if vf_filters:
+                    cmd_fb.extend(["-vf", ",".join(vf_filters)])
+                if normalize_audio:
+                    cmd_fb.extend(["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"])
+                cmd_fb.extend([
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:v",
+                    "libx264",
+                    "-crf",
+                    "20",
+                    "-preset",
+                    "veryfast",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    str(output_path),
+                ])
+                subprocess.run(cmd_fb, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             shutil.copyfile(temp_cropped, output_path)
 
