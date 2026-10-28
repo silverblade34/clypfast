@@ -12,6 +12,7 @@ Cada archivo representa un hito o versión del sistema, permitiendo auditar qué
 | :--- | :--- | :--- | :--- | :--- |
 | `0001` | **v1.0.0** | MVP Pipeline de Agencia (Detección, Transcripción, Smart Crop y Exportación 6M) | ✅ Completado | 2026-09 |
 | `0002` | **v1.1.0** | Fase 2: Modal de Personalización Pre-Descarga (Gancho, Subtítulos, Trim de Tiempos y Zero-Loss Pipeline) | 🚧 En Planificación / Aprobación | 2026-09 |
+| `0003` | **v1.2.0** | Módulo Música: Subtítulos Traducidos y Momentos Destacados; Voz Cantada como Fase Futura | ✅ MVP implementado / Análisis estructural pendiente | 2026-10-16 |
 
 ---
 

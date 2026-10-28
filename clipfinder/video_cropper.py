@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -20,6 +21,9 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+from clipfinder.camera_tracking import camera_path
+from clipfinder.youtube_access import YoutubeSessionRequired, download_error_message, requires_youtube_login, youtube_options
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +47,16 @@ def download_clip_segment(
     end_sec: float,
     output_path: Path,
     progress_callback: Callable[[int, str], None] | None = None,
+    youtube_browser: str | None = None,
 ) -> Path:
     """
     Download or slice a specific clip segment from YouTube or a local file.
     Does NOT download the entire video when given a YouTube URL.
     """
+    if start_sec < 0 or end_sec <= start_sec:
+        raise ValueError("El intervalo del clip debe tener inicio positivo y fin posterior al inicio.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    download_error: Exception | None = None
     is_url = source.startswith("http://") or source.startswith("https://")
 
     if progress_callback:
@@ -60,7 +68,10 @@ def download_clip_segment(
 
         range_fn: Any = download_range_func
         ydl_opts: Any = {
-            "format": "bestvideo[protocol^=http]+bestaudio[protocol^=http]/bestvideo+bestaudio/best",
+            **youtube_options(source, browser_override=youtube_browser),
+            # Prefer H.264 so OpenCV can decode without transcoding;
+            # fall back to best available if H.264 is not offered.
+            "format": "bestvideo[vcodec^=avc1]+bestaudio/bestvideo[vcodec^=h264]+bestaudio/bestvideo+bestaudio/best",
             "download_ranges": range_fn(None, [(start_sec, end_sec)]),
             "force_keyframes_at_cuts": True,
             "outtmpl": str(output_path.with_suffix("")) + ".%(ext)s",
@@ -70,8 +81,14 @@ def download_clip_segment(
             "overwrites": True,
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([source])
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([source])
+        except Exception as ydl_err:
+            download_error = ydl_err
+            if requires_youtube_login(ydl_err):
+                raise YoutubeSessionRequired(download_error_message(ydl_err)) from ydl_err
+            logger.warning("yt-dlp range download error: %s, checking for stream fallback", ydl_err)
 
         # If yt-dlp saved as .webm, .mkv or .mp4.webm, remux cleanly to output_path
         if not output_path.exists() or output_path.stat().st_size < 1000:
@@ -79,7 +96,9 @@ def download_clip_segment(
             parent = output_path.parent
             candidates = [
                 p for p in parent.glob(f"{stem}*")
-                if p != output_path and p.is_file() and p.stat().st_size > 1000
+                if p != output_path and p.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}
+                and not re.search(r"\.f\d+$", p.stem)
+                and p.is_file() and p.stat().st_size > 1000
             ]
             if candidates:
                 best_file = max(candidates, key=lambda f: f.stat().st_size)
@@ -88,11 +107,42 @@ def download_clip_segment(
                     "-c", "copy",
                     str(output_path),
                 ]
-                subprocess.run(remux_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:
+                    subprocess.run(remux_cmd, check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as remux_err:
+                    download_error = remux_err
+                else:
                     best_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
+
+        # Secondary fallback for HLS/Twitch/Kick if range cutting didn't generate output
+        if not output_path.exists() or output_path.stat().st_size < 1000:
+            try:
+                probe_opts = {**youtube_options(source, browser_override=youtube_browser), "quiet": True, "format": "bestvideo+bestaudio/best"}
+                with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                    info = ydl.extract_info(source, download=False)
+                    streams = (info.get("requested_formats") or [info]) if info else []
+                    streams = [stream for stream in streams if stream.get("url")]
+                    if streams:
+                        dur = max(1.0, end_sec - start_sec)
+                        cmd = ["ffmpeg", "-y", "-nostdin"]
+                        for stream in streams:
+                            headers = stream.get("http_headers") or info.get("http_headers") or {}
+                            if headers:
+                                cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
+                            cmd += ["-ss", str(start_sec), "-i", stream["url"]]
+                        video_index = next((i for i, s in enumerate(streams) if s.get("vcodec") != "none"), 0)
+                        audio_index = next((i for i, s in enumerate(streams) if s.get("acodec") != "none"), video_index)
+                        cmd += [
+                            "-map", f"{video_index}:v:0", "-map", f"{audio_index}:a:0?",
+                            "-t", str(dur), "-c:v", "libx264", "-c:a", "aac",
+                            "-avoid_negative_ts", "make_zero", str(output_path),
+                        ]
+                        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
+                    else:
+                        raise RuntimeError("El proveedor no devolvió URLs de video descargables.")
+            except Exception as fb_err:
+                download_error = fb_err
+                logger.warning("FFmpeg HLS stream slice fallback failed: %s", fb_err)
     else:
         # Local video file: slice using ffmpeg
         cmd = [
@@ -114,8 +164,11 @@ def download_clip_segment(
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    if not output_path.exists():
-        raise FileNotFoundError(f"Failed to generate clip segment at {output_path}")
+    if not output_path.exists() or output_path.stat().st_size < 1000:
+        detail = download_error_message(download_error) if download_error else "El archivo está vacío o incompleto."
+        if isinstance(download_error, subprocess.CalledProcessError):
+            detail = (download_error.stderr or detail)[-2000:]
+        raise RuntimeError(f"No se pudo extraer el segmento de video: {detail}") from download_error
 
     if progress_callback:
         progress_callback(30, "Segmento descargado con éxito.")
@@ -210,16 +263,79 @@ def _detect_faces_yunet(
     Detect faces on a frame using YuNet.
     Returns list of (x, y, w, h, score).
     """
-    detector.setInputSize((orig_w, orig_h))
-    _, detections = detector.detect(frame)
+    # YuNet misses large/profile faces when fed full 1080p/4K frames.
+    scale = min(1.0, 960.0 / orig_w)
+    image = cv2.resize(frame, (int(orig_w * scale), int(orig_h * scale))) if scale < 1 else frame
+    detector.setInputSize((image.shape[1], image.shape[0]))
+    detector.setScoreThreshold(0.7)
+    _, detections = detector.detect(image)
     results: list[tuple[float, float, float, float, float]] = []
     if detections is not None:
         for det in detections:
             x, y, w, h = det[0], det[1], det[2], det[3]
             score = det[14]
             if score >= 0.5:
-                results.append((float(x), float(y), float(w), float(h), float(score)))
+                results.append((float(x / scale), float(y / scale), float(w / scale), float(h / scale), float(score)))
     return results
+
+
+def _open_tracking_video(input_path: Path) -> cv2.VideoCapture:
+    """Check decoding and convert unsupported codecs before face tracking."""
+    cap = cv2.VideoCapture(str(input_path))
+    readable, _ = cap.read() if cap.isOpened() else (False, None)
+    if readable:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        return cap
+    cap.release()
+
+    compatible = input_path.with_name(f"{input_path.stem}_compatible.mp4")
+    converted = False
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-nostdin",
+                # Tolerate minor container errors (truncated segments, missing moov, etc.)
+                "-fflags", "+genpts+igndts",
+                "-err_detect", "ignore_err",
+                "-v", "warning",
+                "-i", str(input_path),
+                "-map", "0:v:0", "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "fast",
+                "-crf", "18", "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                # Re-generate timestamps to avoid negative PTS issues
+                "-avoid_negative_ts", "make_zero",
+                str(compatible),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        cap = cv2.VideoCapture(str(compatible))
+        readable, _ = cap.read() if cap.isOpened() else (False, None)
+        cap.release()
+        if not readable:
+            raise ValueError("El segmento convertido tampoco contiene cuadros legibles.")
+        # Replace input_path with the converted file so the rest of the pipeline
+        # reads the H.264-encoded version. Mark as converted so finally does not
+        # delete the destination file.
+        compatible.replace(input_path)
+        converted = True
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Cannot decode clip segment: %s", exc.stderr)
+        raise ValueError(
+            "El segmento descargado está incompleto o no contiene un video válido. "
+            "Vuelve a exportar el clip; si persiste, utiliza el archivo de video local."
+        ) from exc
+    finally:
+        # Only delete the temp compatible file if the rename did NOT happen yet.
+        # After compatible.replace(input_path) the source path no longer exists,
+        # so unlink would be a no-op anyway, but being explicit avoids confusion.
+        if not converted:
+            compatible.unlink(missing_ok=True)
+    cap = cv2.VideoCapture(str(input_path))
+    if not cap.isOpened():
+        cap.release()
+        raise ValueError("No se pudo abrir el segmento convertido para el seguimiento facial.")
+    return cap
 
 
 def crop_video_smart(
@@ -234,15 +350,10 @@ def crop_video_smart(
     Modes:
     - 'smart_track': Virtual camera smoothly following single speaker.
     - 'split_screen': Stacked vertical layout for two speakers (e.g. podcast).
-    - 'auto': Automatically selects 'split_screen' if two speakers are detected,
-              otherwise 'smart_track'.
+    - 'auto': Vertical crop following the audio/visual active speaker.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    model_path = get_yunet_model_path()
-
-    cap = cv2.VideoCapture(str(input_path))
-    if not cap.isOpened():
-        raise ValueError(f"Could not open video file: {input_path}")
+    cap = _open_tracking_video(input_path)
 
     orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -259,6 +370,7 @@ def crop_video_smart(
     target_h = 1920
     crop_w = int(orig_h * (9 / 16))  # 9:16 width inside original height
 
+    model_path = get_yunet_model_path()
     detector = cv2.FaceDetectorYN.create(str(model_path), "", (orig_w, orig_h))
 
     # ── Phase 1: Fast Pass - Analyze face positions across frames ─────────────
@@ -271,13 +383,20 @@ def crop_video_smart(
     frame_idx = 0
     dual_speaker_hits = 0
     sampled_count = 0
+    cuts: set[int] = set()
+    previous_preview = None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        if frame_idx % sample_step == 0:
+        preview = cv2.resize(frame, (64, 36)).astype(np.float32) / 255.0
+        scene_cut = previous_preview is not None and float(np.mean(np.abs(preview - previous_preview))) > 0.10
+        previous_preview = preview
+        if scene_cut:
+            cuts.add(frame_idx)
+        if frame_idx % sample_step == 0 or scene_cut:
             sampled_count += 1
             faces = _detect_faces_yunet(detector, frame, orig_w, orig_h)
             frame_faces[frame_idx] = faces
@@ -297,59 +416,36 @@ def crop_video_smart(
     # Decide mode if auto
     chosen_mode = mode
     if chosen_mode == "auto":
-        is_podcast_dual = (sampled_count > 0) and (dual_speaker_hits / sampled_count >= 0.30)
-        chosen_mode = "split_screen" if is_podcast_dual else "smart_track"
+        chosen_mode = "smart_track"
 
     logger.info("Smart crop selected mode: %s (dual hits: %d/%d)", chosen_mode, dual_speaker_hits, sampled_count)
 
     # ── Phase 2: Compute Smoothed Trajectories ────────────────────────────────
-    raw_targets: list[float] = []
-    left_targets: list[float] = []
-    right_targets: list[float] = []
-
-    last_center_x = float(orig_w / 2)
-    last_left_x = float(orig_w * 0.25)
-    last_right_x = float(orig_w * 0.75)
-
-    for i in range(total_frames):
-        # Find nearest sampled frame
-        nearest_sample = min(frame_faces.keys(), key=lambda k: abs(k - i), default=None)
-        faces = frame_faces.get(nearest_sample, []) if nearest_sample is not None else []
-
-        if faces:
-            # Sort by area (largest face = primary speaker)
-            faces_by_area = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
-            primary = faces_by_area[0]
-            last_center_x = primary[0] + primary[2] / 2
-
-            # For split screen: find left and right speakers
-            faces_by_x = sorted(faces, key=lambda f: f[0])
-            last_left_x = faces_by_x[0][0] + faces_by_x[0][2] / 2
-            last_right_x = faces_by_x[-1][0] + faces_by_x[-1][2] / 2
-
-        raw_targets.append(last_center_x)
-        left_targets.append(last_left_x)
-        right_targets.append(last_right_x)
-
-    # Apply Exponential Moving Average (EMA) smoothing for virtual camera
-    smoothed_center: list[float] = []
-    curr = raw_targets[0] if raw_targets else float(orig_w / 2)
-    alpha = 0.08  # smooth camera pan
-    for t in raw_targets:
-        curr = alpha * t + (1 - alpha) * curr
-        smoothed_center.append(curr)
-
-    smoothed_left: list[float] = []
-    curr_l = left_targets[0] if left_targets else float(orig_w * 0.25)
-    for t in left_targets:
-        curr_l = alpha * t + (1 - alpha) * curr_l
-        smoothed_left.append(curr_l)
-
-    smoothed_right: list[float] = []
-    curr_r = right_targets[0] if right_targets else float(orig_w * 0.75)
-    for t in right_targets:
-        curr_r = alpha * t + (1 - alpha) * curr_r
-        smoothed_right.append(curr_r)
+    # Use the actual decoded length, which can differ from container metadata.
+    total_frames = frame_idx
+    if not total_frames:
+        cap.release()
+        raise ValueError("El segmento no contiene cuadros de video legibles.")
+    # IA Smart keeps its vertical format and uses audio/visual speaker scores.
+    if chosen_mode != "split_screen":
+        from clipfinder.active_speaker import select_active_speaker
+        try:
+            selected_faces = select_active_speaker(input_path, frame_faces, fps, cuts, progress_callback)
+        except Exception:
+            cap.release()
+            raise
+        if os.getenv("CLIPFINDER_TRACKING_DEBUG"):
+            import json
+            output_path.with_suffix(".tracking.json").write_text(json.dumps({
+                "fps": fps, "width": orig_w, "cuts": sorted(cuts),
+                "faces": frame_faces, "selected": selected_faces,
+            }), encoding="utf-8")
+        smoothed_center = camera_path(selected_faces, total_frames, orig_w, crop_w, fps, cuts, hard_switch=True)
+    else:
+        smoothed_center = camera_path(frame_faces, total_frames, orig_w, crop_w, fps, cuts)
+    split_width = min(orig_w, int(orig_h * (1080 / 960)))
+    smoothed_left = camera_path(frame_faces, total_frames, orig_w, split_width, fps, cuts, "left")
+    smoothed_right = camera_path(frame_faces, total_frames, orig_w, split_width, fps, cuts, "right")
 
     # ── Phase 3: Render Frames & Pipe to ffmpeg ────────────────────────────────
     if progress_callback:
@@ -358,80 +454,16 @@ def crop_video_smart(
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    # ffmpeg pipe command with hardware acceleration
+    # A pipe cannot replay frames after a hardware encoder fails asynchronously.
+    # Use the portable encoder and check its exit status before reporting success.
     pipe_cmd = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "rawvideo",
-        "-vcodec",
-        "rawvideo",
-        "-s",
-        f"{target_w}x{target_h}",
-        "-pix_fmt",
-        "bgr24",
-        "-r",
-        str(fps),
-        "-i",
-        "-",
-        "-i",
-        str(input_path),
-        "-map",
-        "0:v",
-        "-map",
-        "1:a?",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:v",
-        "h264_videotoolbox",
-        "-b:v",
-        "6M",
-        "-c:a",
-        "aac",
-        "-shortest",
-        str(output_path),
+        "ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{target_w}x{target_h}", "-pix_fmt", "bgr24", "-r", str(fps),
+        "-i", "-", "-i", str(input_path), "-map", "0:v", "-map", "1:a?",
+        "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "21",
+        "-preset", "veryfast", "-c:a", "aac", "-shortest", str(output_path),
     ]
-
-    pipe_proc = None
-    try:
-        pipe_proc = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    except Exception as exc:
-        logger.warning("Hardware encoder failed, falling back to libx264: %s", exc)
-        pipe_cmd_fb = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-vcodec",
-            "rawvideo",
-            "-s",
-            f"{target_w}x{target_h}",
-            "-pix_fmt",
-            "bgr24",
-            "-r",
-            str(fps),
-            "-i",
-            "-",
-            "-i",
-            str(input_path),
-            "-map",
-            "0:v",
-            "-map",
-            "1:a?",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "21",
-            "-preset",
-            "veryfast",
-            "-c:a",
-            "aac",
-            "-shortest",
-            str(output_path),
-        ]
-        pipe_proc = subprocess.Popen(pipe_cmd_fb, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    pipe_proc = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     frame_num = 0
     split_h = target_h // 2  # 960 each
@@ -485,6 +517,9 @@ def crop_video_smart(
             pipe_proc.stdin.close()
             pipe_proc.wait()
 
+    if pipe_proc.returncode != 0:
+        raise RuntimeError("FFmpeg no pudo completar el renderizado vertical.")
+
     if progress_callback:
         progress_callback(100, "¡Clip vertical con IA completado!")
 
@@ -511,6 +546,7 @@ def process_clip(
     sub_base_color: str | None = None,
     sub_highlight_color: str | None = None,
     sub_margin_v: int | None = None,
+    youtube_browser: str | None = None,
 ) -> Path:
     """
     High-level orchestrator: Slices clip and applies requested formatting.
@@ -518,7 +554,7 @@ def process_clip(
     Modes:
     - 'original': 16:9 high quality cut.
     - 'vertical_blur': 9:16 with blurred video background.
-    - 'smart_vertical': 9:16 with AI Face Tracking (auto split-screen for podcasts).
+    - 'smart_vertical': 9:16 with audio/visual active speaker tracking.
     - 'smart_track': 9:16 single speaker face tracking.
     - 'split_screen': 9:16 dual speaker stacked podcast layout.
     """
@@ -533,7 +569,10 @@ def process_clip(
 
     try:
         # Step 1: Download / extract original 16:9 segment
-        download_clip_segment(source, start_sec, end_sec, temp_raw, progress_callback)
+        if youtube_browser:
+            download_clip_segment(source, start_sec, end_sec, temp_raw, progress_callback, youtube_browser=youtube_browser)
+        else:
+            download_clip_segment(source, start_sec, end_sec, temp_raw, progress_callback)
 
         # Step 2: Apply crop transformation
         if mode == "original":

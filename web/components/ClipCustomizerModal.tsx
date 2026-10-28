@@ -310,6 +310,7 @@ export default function ClipCustomizerModal({
   const [renderLabel, setRenderLabel] = useState("");
   const [renderSuccess, setRenderSuccess] = useState(false);
   const [renderError, setRenderError] = useState("");
+  const [renderErrorCode, setRenderErrorCode] = useState<string | null>(null);
   const [activeRenderId, setActiveRenderId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -370,8 +371,9 @@ export default function ClipCustomizerModal({
   }, [startSec]);
 
   // ── Exportar ─────────────────────────────────────────────────
-  const handleExport = async () => {
+  const handleExport = async (youtubeBrowser?: "brave") => {
     setRenderError("");
+    setRenderErrorCode(null);
     setIsRendering(true);
     setRenderProgress(5);
     setRenderLabel("Iniciando procesamiento...");
@@ -398,6 +400,7 @@ export default function ClipCustomizerModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: targetUrl,
+          ...(youtubeBrowser ? { youtube_browser: youtubeBrowser } : {}),
           clip_index: index,
           start_seconds: startSec,
           end_seconds: endSec,
@@ -451,6 +454,7 @@ export default function ClipCustomizerModal({
             setActiveRenderId(null);
             if (data.status === "error") {
               setRenderError(data.error ?? "Error al procesar.");
+              setRenderErrorCode(data.error_code ?? null);
             }
           }
         } catch {
@@ -1172,8 +1176,12 @@ export default function ClipCustomizerModal({
           )}
 
           {renderError && (
-            <div className={styles.errorBadge} title={renderError}>
-              {renderError}
+            <div className={styles.errorBadge} role="alert">
+              <span>{renderError}</span>
+              {renderErrorCode === "youtube_session_required" && <>
+                <small>Usará la sesión de Brave solo para este intento de descarga.</small>
+                <button type="button" disabled={isRendering} onClick={() => void handleExport("brave")}>Reintentar con mi sesión de Brave</button>
+              </>}
             </div>
           )}
 
@@ -1192,7 +1200,7 @@ export default function ClipCustomizerModal({
 
           <button
             className={styles.exportBtn}
-            onClick={handleExport}
+            onClick={() => void handleExport()}
             disabled={isRendering}
           >
             {isRendering ? (

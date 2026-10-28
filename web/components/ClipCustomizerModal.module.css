@@ -948,3 +948,7 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+.errorBadge { white-space: normal; overflow: visible; text-overflow: clip; display: grid; gap: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.errorBadge small { color: var(--text-muted); }
+.errorBadge button { justify-self: start; padding: 8px 12px; color: #22d3ee; background: #083344; border: 1px solid #155e75; border-radius: 8px; cursor: pointer; }

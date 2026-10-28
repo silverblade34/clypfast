@@ -30,9 +30,18 @@ load_dotenv()
 
 app = FastAPI(title="ClipFinder API", version="0.1.0")
 
+from clipfinder.music_api import router as music_router
+
+app.include_router(music_router)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:4030",
+        "http://127.0.0.1:4030",
+    ],
     allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
@@ -79,7 +88,8 @@ class AnalyzeRequest(BaseModel):
 def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
     """Run the full ClipFinder pipeline and update job progress."""
     try:
-        from clipfinder.downloader import download_audio, extract_media_metadata, get_source_id, is_url
+        from clipfinder.downloader import detect_platform, download_audio, extract_media_metadata, get_source_id, is_url
+        from clipfinder.audio_peaks import detect_audio_peaks
         from clipfinder.subtitles import fetch_youtube_subtitles
         from clipfinder.groq_whisper import transcribe_with_groq
         from clipfinder.transcriber import transcribe
@@ -99,16 +109,19 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
 
         groq_key = os.getenv("GROQ_API_KEY")
 
+        platform = detect_platform(req.url)
         video_id = get_source_id(req.url)
         output_dir = Path("outputs") / video_id
         duration = 0.0
         segments = []
         method_used = None
         audio_path: Path | None = None
+        audio_peaks: list[dict[str, Any]] = []
         video_title: str = f"Video {video_id}"
         video_channel: str | None = None
+        thumbnail_url: str | None = None
 
-        # Extract real title and channel early
+        # Extract real title, channel, duration and thumbnail early
         try:
             meta = extract_media_metadata(req.url)
             if meta.get("title"):
@@ -117,6 +130,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 video_channel = meta["channel"]
             if duration == 0 and meta.get("duration"):
                 duration = meta["duration"]
+            if meta.get("thumbnail"):
+                thumbnail_url = meta["thumbnail"]
         except Exception as meta_exc:
             logger.warning("Failed to extract early video metadata: %s", meta_exc)
 
@@ -126,8 +141,8 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             video_channel=video_channel,
         )
 
-        # ── Step 0: Try Instant YouTube Subtitles ────────────────────────────
-        if req.transcription_engine in ("auto", "youtube_subs") and is_url(req.url):
+        # ── Step 0: Try Instant YouTube Subtitles (Only applicable to YouTube) ─────
+        if platform == "youtube" and req.transcription_engine in ("auto", "youtube_subs") and is_url(req.url):
             _update_job(
                 job_id,
                 step="subtitles",
@@ -135,7 +150,10 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 progress=10,
                 video_id=video_id,
             )
-            subs_data = fetch_youtube_subtitles(req.url, language=req.language)
+            subs_data = fetch_youtube_subtitles(
+                req.url, language=req.language,
+                allow_automatic=req.transcription_engine == "youtube_subs",
+            )
             if subs_data:
                 segments, duration = subs_data
                 method_used = "youtube_subs"
@@ -149,7 +167,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 _update_job(
                     job_id,
                     step="transcribe_done",
-                    step_label=f"✓ Subtítulos oficiales de YouTube obtenidos ({len(segments)} segmentos)",
+                    step_label=f"✓ Subtítulos de YouTube obtenidos ({len(segments)} segmentos)",
                     progress=60,
                     segments=len(segments),
                     duration=round(duration, 1),
@@ -165,14 +183,24 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     error="No se encontraron subtítulos en español para este video en YouTube. Por favor selecciona 'Auto', 'Groq Whisper' o 'Local'.",
                 )
                 return
+        elif req.transcription_engine == "youtube_subs" and platform != "youtube":
+            _update_job(
+                job_id,
+                status="error",
+                step="error",
+                step_label="Plataforma sin subtítulos oficiales",
+                error=f"La opción 'Subtítulos oficiales' solo está disponible para YouTube. Para {platform.capitalize()} selecciona 'Auto', 'Groq Whisper' o 'Local'.",
+            )
+            return
 
         # ── Step 1 & 2: Download + Whisper (Groq or Local) if no subtitles ────
         if not segments:
             # ── Step 1: Download audio ────────────────────────────────────────
+            platform_name = "Twitch" if platform == "twitch" else ("Kick" if platform == "kick" else "audio")
             _update_job(
                 job_id,
                 step="download",
-                step_label="Descargando audio (16kHz mono)...",
+                step_label=f"Descargando audio de {platform_name} (16kHz mono)...",
                 progress=15,
                 video_id=video_id,
                 download_pct=0,
@@ -187,6 +215,29 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 )
 
             audio_path, duration = download_audio(req.url, output_dir, progress_callback=on_download)
+
+            # ── Step 1.5: Acoustic Peak Analysis (Shouts, laughter, noise spikes) ─
+            try:
+                audio_peaks = detect_audio_peaks(audio_path)
+                if audio_peaks:
+                    logger.info("Detectados %d picos acústicos de alta energía", len(audio_peaks))
+            except Exception as peak_err:
+                logger.warning("Error calculando picos de audio: %s", peak_err)
+
+            # Save early metadata for thumbnail and source tracking
+            try:
+                meta_json_path = output_dir / "metadata.json"
+                meta_payload = {
+                    "title": video_title,
+                    "channel": video_channel,
+                    "duration": duration,
+                    "thumbnail": thumbnail_url,
+                    "platform": platform,
+                    "audio_peaks_count": len(audio_peaks),
+                }
+                meta_json_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as meta_save_err:
+                logger.warning("Could not save metadata.json: %s", meta_save_err)
 
             _update_job(
                 job_id,
@@ -214,7 +265,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                 _update_job(
                     job_id,
                     step="transcribe",
-                    step_label="Transcribiendo con Groq Whisper Cloud (Large-v3-Turbo)...",
+                    step_label="Transcribiendo con Groq Whisper Cloud (Large-v3)...",
                     progress=35,
                     transcribe_pct=10,
                     transcribe_segs=0,
@@ -223,7 +274,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     audio_path,
                     api_key=groq_key,
                     language=req.language or "es",
-                    model="whisper-large-v3-turbo",
+                    model="whisper-large-v3",
                     progress_callback=on_transcribe,
                 )
                 method_used = "groq"
@@ -242,7 +293,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
                     audio_path,
                     model_size=req.whisper_model,  # type: ignore[arg-type]
                     language=req.language,
-                    beam_size=1,
+                    beam_size=5,
                     cpu_threads=8,
                     progress_callback=on_transcribe,
                 )
@@ -324,6 +375,7 @@ def _run_pipeline(job_id: str, req: AnalyzeRequest) -> None:
             progress_callback=on_chunk,
             video_title=video_title,
             video_channel=video_channel,
+            audio_peaks=audio_peaks,
         )
 
         _update_job(
@@ -631,6 +683,7 @@ def _get_render_job(render_id: str) -> dict[str, Any] | None:
 
 class RenderClipRequest(BaseModel):
     url: str
+    youtube_browser: Literal["brave", "chrome", "edge", "firefox", "safari"] | None = None
     clip_index: int
     start_seconds: float
     end_seconds: float
@@ -650,6 +703,33 @@ class RenderClipRequest(BaseModel):
     sub_base_color: str | None = None           # Color base en formato ASS: &H00BBGGRR&
     sub_highlight_color: str | None = None      # Color de palabra activa en formato ASS
     sub_margin_v: int | None = None             # Margen vertical desde el fondo (píxeles sobre 1920px)
+
+
+def _cached_render_source(source: str, clip_id: int | None = None) -> str:
+    """Reuse a complete local original, never an already cropped/exported clip."""
+    from clipfinder.downloader import get_source_id, is_url
+    if not is_url(source):
+        return source
+    source_id = get_source_id(source)
+    if clip_id:
+        try:
+            from sqlmodel import Session
+            from clipfinder.db import engine
+            from clipfinder.models import Clip
+            with Session(engine) as session:
+                clip = session.get(Clip, clip_id)
+                video = clip.video if clip else None
+                if video and video.source_path and video.source_url and get_source_id(video.source_url) == source_id:
+                    cached = Path(video.source_path)
+                    if cached.is_file():
+                        return str(cached)
+        except Exception as exc:
+            logger.warning("Could not resolve local render source: %s", exc)
+    for name in ("source.mp4", "original.mp4", "source.mkv", "original.mkv"):
+        cached = Path("outputs") / source_id / name
+        if cached.is_file() and cached.stat().st_size > 1000:
+            return str(cached)
+    return source
 
 
 def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
@@ -686,7 +766,7 @@ def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
                 logger.warning("Could not parse transcript for subtitles: %s", tr_err)
 
         process_clip(
-            source=req.url,
+            source=_cached_render_source(req.url, req.clip_id),
             start_sec=req.start_seconds,
             end_sec=req.end_seconds,
             output_path=final_path,
@@ -705,6 +785,7 @@ def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
             sub_base_color=req.sub_base_color,
             sub_highlight_color=req.sub_highlight_color,
             sub_margin_v=req.sub_margin_v,
+            youtube_browser=req.youtube_browser,
         )
 
         # Update status in SQLite database if clip_id was provided
@@ -737,12 +818,16 @@ def _run_render_job(render_id: str, req: RenderClipRequest) -> None:
             download_url=f"/clips/download/{filename}",
         )
     except Exception as exc:
+        from clipfinder.youtube_access import YoutubeSessionRequired
+        needs_session = isinstance(exc, YoutubeSessionRequired)
         _update_render_job(
             render_id,
             status="error",
             progress=0,
-            step_label="Error al procesar el video",
-            error=str(exc),
+            step_label="YouTube solicita verificar tu sesión" if needs_session else "Error al procesar el video",
+            error_code="youtube_session_required" if needs_session else None,
+            error=("YouTube bloqueó la descarga. Abre YouTube en Brave con tu sesión iniciada "
+                   "y usa el botón de reintento con esa sesión." if needs_session else str(exc)),
         )
 
 
@@ -852,18 +937,18 @@ async def get_clients() -> list[str]:
 @app.get("/videos/lookup")
 async def lookup_video_by_url(url: str) -> dict[str, Any]:
     """
-    Check if a YouTube URL was previously processed.
+    Check if a video URL (YouTube, Twitch, Kick) was previously processed.
     Returns the video record (with id, title, clips_count) if found,
     or raises 404 if not in the database.
     """
     from sqlmodel import Session, col, select
     from clipfinder.db import engine
     from clipfinder.models import Video
-    from clipfinder.downloader import _extract_video_id
+    from clipfinder.downloader import get_source_id, is_url
 
     # Normalize: strip trailing slash and whitespace
     normalized_url = url.strip().rstrip("/")
-    input_vid = _extract_video_id(normalized_url) if ("youtube.com" in normalized_url or "youtu.be" in normalized_url) else None
+    input_vid = get_source_id(normalized_url) if is_url(normalized_url) else None
 
     with Session(engine) as session:
         videos = session.exec(
@@ -872,9 +957,9 @@ async def lookup_video_by_url(url: str) -> dict[str, Any]:
 
         for v in videos:
             stored = (v.source_url or "").strip().rstrip("/")
-            stored_vid = _extract_video_id(stored) if ("youtube.com" in stored or "youtu.be" in stored) else None
+            stored_vid = get_source_id(stored) if is_url(stored) else None
 
-            # Match exact URL or same YouTube video ID
+            # Match exact URL or same extracted source video ID
             is_match = (stored == normalized_url) or (
                 input_vid and stored_vid and input_vid == stored_vid and input_vid != "video"
             )
@@ -1174,6 +1259,41 @@ async def get_video_clips(video_id: int) -> list[dict[str, Any]]:
         return results
 
 
+class GenerateMoreClipsRequest(BaseModel):
+    count: int = 6
+    provider: str | None = None
+    model: str | None = None
+    content_type: str | None = None
+
+
+@app.post("/videos/{video_id}/generate-more-clips")
+async def generate_more_clips_endpoint(
+    video_id: int,
+    req: GenerateMoreClipsRequest = GenerateMoreClipsRequest(),
+) -> dict[str, Any]:
+    """Generate more viral clips for an already analyzed video without repeating existing clips."""
+    from clipfinder.analyzer import generate_more_clips_for_video
+
+    try:
+        result = generate_more_clips_for_video(
+            video_id=video_id,
+            target_count=max(1, min(20, req.count)),
+            provider=req.provider,
+            model=req.model,
+            content_type=req.content_type,
+        )
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except FileNotFoundError as fe:
+        raise HTTPException(status_code=404, detail=str(fe))
+    except Exception as exc:
+        logger.exception("Error generating more clips for video %d: %s", video_id, exc)
+        raise HTTPException(status_code=500, detail=f"Error al generar más clips: {str(exc)}")
+
+
+
+
 @app.get("/videos/{video_id}/transcript")
 async def get_video_transcript(
     video_id: int,
@@ -1361,6 +1481,7 @@ async def enrich_clip(clip_id: int) -> dict[str, Any]:
                             text=str(s.get("text", "")).strip(),
                             start=float(s.get("start", 0)),
                             end=float(s.get("end", 0)),
+                            words=s.get("words"),
                         )
                         for s in raw_segs
                         if str(s.get("text", "")).strip()
@@ -1577,6 +1698,39 @@ def _get_cached_stream_url(source_url: str) -> str | None:
     return None
 
 
+def _resolve_thumbnail_fallback(source_url: str | None, vid_identifier: str | None):
+    from clipfinder.downloader import detect_platform, extract_media_metadata
+
+    if source_url:
+        platform = detect_platform(source_url)
+        if platform == "youtube" and vid_identifier and not vid_identifier.startswith(("twitch_", "kick_")):
+            return RedirectResponse(f"https://img.youtube.com/vi/{vid_identifier}/hqdefault.jpg", status_code=302)
+
+        # Check cached metadata.json
+        if vid_identifier:
+            meta_file = Path("outputs") / vid_identifier / "metadata.json"
+            if meta_file.exists():
+                try:
+                    data = json.loads(meta_file.read_text(encoding="utf-8"))
+                    if data.get("thumbnail"):
+                        return RedirectResponse(data["thumbnail"], status_code=302)
+                except Exception:
+                    pass
+
+        # Try fast metadata probe for thumbnail
+        try:
+            meta = extract_media_metadata(source_url)
+            if meta.get("thumbnail"):
+                return RedirectResponse(meta["thumbnail"], status_code=302)
+        except Exception:
+            pass
+
+    if vid_identifier and not vid_identifier.startswith(("twitch_", "kick_")):
+        return RedirectResponse(f"https://img.youtube.com/vi/{vid_identifier}/hqdefault.jpg", status_code=302)
+
+    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+
+
 @app.get("/clips/{clip_id}/thumbnail")
 async def get_clip_thumbnail(clip_id: int, time: float | None = None):
     """Return an exact video frame thumbnail at start_seconds or specified time for this clip."""
@@ -1633,9 +1787,7 @@ async def get_clip_thumbnail(clip_id: int, time: float | None = None):
     except Exception as exc:
         logger.warning(f"Error generating thumbnail for clip {clip_id} at {start_sec}s: {exc}")
 
-    if yt_id:
-        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", status_code=302)
-    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+    return _resolve_thumbnail_fallback(source_url, yt_id)
 
 
 @app.get("/thumbnail/frame")
@@ -1676,9 +1828,7 @@ async def get_frame_thumbnail_by_url(url: str, time: float = 0.0):
     except Exception as exc:
         logger.warning(f"Error generating frame thumbnail for {url} at {time}s: {exc}")
 
-    if yt_id:
-        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", status_code=302)
-    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+    return _resolve_thumbnail_fallback(url, cache_key)
 
 
 @app.get("/videos/{video_id}/thumbnail")
@@ -1688,11 +1838,11 @@ async def get_video_frame_thumbnail(video_id: int, time: float = 0.0):
     from sqlmodel import Session
     from clipfinder.db import engine
     from clipfinder.models import Video
-    from clipfinder.downloader import _extract_video_id
+    from clipfinder.downloader import _extract_video_id, get_source_id
 
     source_url = None
     source_path = None
-    yt_id = None
+    vid_id_str = None
 
     with Session(engine) as session:
         video = session.get(Video, video_id)
@@ -1702,7 +1852,7 @@ async def get_video_frame_thumbnail(video_id: int, time: float = 0.0):
         source_path = video.source_path
 
     if source_url:
-        yt_id = _extract_video_id(source_url)
+        vid_id_str = get_source_id(source_url)
 
     thumbs_dir = Path("outputs/thumbs")
     thumbs_dir.mkdir(parents=True, exist_ok=True)
@@ -1733,9 +1883,8 @@ async def get_video_frame_thumbnail(video_id: int, time: float = 0.0):
     except Exception as exc:
         logger.warning(f"Error generating thumbnail for video {video_id} at {time}s: {exc}")
 
-    if yt_id:
-        return RedirectResponse(f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg")
-    raise HTTPException(status_code=404, detail="No se pudo obtener la miniatura")
+    return _resolve_thumbnail_fallback(source_url, vid_id_str)
+
 
 
 

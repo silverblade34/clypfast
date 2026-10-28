@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, field_validator
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -96,6 +96,9 @@ class ClipCandidate(BaseModel):
     title: str
     reason: str
     score: int
+    narrative_type: Optional[Literal["personal", "superacion", "conflicto", "aprendizaje", "humor", "otro"]] = None
+    context_complete: Optional[bool] = None
+    context_reason: Optional[str] = None
     caption: Optional[str] = None
     hashtags: Optional[Union[List[str], str]] = None
 

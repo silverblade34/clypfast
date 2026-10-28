@@ -176,7 +176,12 @@ export default function AnalyzePage({
 
   const clips = localClips.length > 0 ? localClips : (job?.result?.clips ?? []);
   const videoUrl = job?.url ?? "";
-  const videoId = job?.video_id || extractYouTubeId(videoUrl);
+  const ytVideoId = extractYouTubeId(videoUrl);
+  const videoId = job?.video_id || ytVideoId;
+  const platform = /twitch\.tv/i.test(videoUrl) ? "Twitch" : (/kick\.com/i.test(videoUrl) ? "Kick" : (/youtube\.com|youtu\.be/i.test(videoUrl) ? "YouTube" : "Video"));
+  const thumbnailSrc = ytVideoId
+    ? `https://img.youtube.com/vi/${ytVideoId}/hqdefault.jpg`
+    : `/thumbnail/frame?url=${encodeURIComponent(videoUrl)}`;
   const isDone = job?.status === "done";
   const isError = job?.status === "error" || !!error;
 
@@ -338,7 +343,7 @@ export default function AnalyzePage({
                 {videoId && (
                   <div className={`${styles.previewCard} glass-card fade-in`}>
                     <img
-                      src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
+                      src={thumbnailSrc}
                       alt="Miniatura de video"
                       className={styles.thumbnail}
                     />
@@ -501,23 +506,23 @@ export default function AnalyzePage({
               {/* Left: Video player */}
               <div style={{ display: "flex", flexDirection: "column" }}>
                 <div className={styles.playerWrapper}>
-                  {videoId ? (
+                  {ytVideoId ? (
                     <YouTubePlayer
                       ref={playerRef}
-                      videoId={videoId}
+                      videoId={ytVideoId}
                       className={styles.player}
                     />
                   ) : (
                     <div className={styles.noEmbed}>
                       <Film size={32} />
-                      <p>Este video no puede embeberse directamente.</p>
+                      <p>Visualización para {platform}</p>
                       <a
                         href={videoUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={styles.externalLink}
                       >
-                        Ver en YouTube <ExternalLink size={14} />
+                        Ver original en {platform} <ExternalLink size={14} />
                       </a>
                     </div>
                   )}

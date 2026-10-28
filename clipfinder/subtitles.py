@@ -37,6 +37,7 @@ def is_youtube_url(url: str) -> bool:
 def fetch_youtube_subtitles(
     url: str,
     language: str | None = None,
+    allow_automatic: bool = True,
 ) -> tuple[list[TranscriptSegment], float] | None:
     """
     Attempt to fetch subtitles directly from YouTube without downloading audio.
@@ -83,7 +84,7 @@ def fetch_youtube_subtitles(
             # 1. Try manual subtitles first (human-curated)
             chosen_entries, chosen_lang = _pick_subtitle_track(subtitles, target_langs)
             # 2. Fall back to automatic captions
-            if not chosen_entries:
+            if not chosen_entries and allow_automatic:
                 chosen_entries, chosen_lang = _pick_subtitle_track(auto_captions, target_langs)
 
             if not chosen_entries:
@@ -122,7 +123,7 @@ def _pick_subtitle_track(
     # Fuzzy match on prefix (e.g. 'es' matching 'es-419')
     for lang in target_langs:
         for available_lang, formats in tracks_dict.items():
-            if available_lang.startswith(lang) and formats:
+            if (available_lang == lang or available_lang.startswith(lang + "-")) and formats:
                 return formats, available_lang
 
     return None, None

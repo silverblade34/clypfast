@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from clipfinder.models import ClipCandidate, LLMClipsResponse, LLMSocialContentResponse, TranscriptSegment
+from clipfinder.audio_peaks import correlate_clip_with_peaks, format_audio_peaks_for_prompt
 
 LLMProvider = Literal["groq", "gemini"]
 
@@ -35,6 +36,15 @@ MAX_TOKENS_PER_CHUNK: int = 12_000     # rough token safety limit
 # ── Prompts por Tipo de Contenido ─────────────────────────────────────────────
 
 CONTENT_TYPE_PROMPTS: dict[str, str] = {
+    "irl_calle": (
+        "CRITERIOS ESPECÍFICOS (IRL EN LA CALLE, BROMAS, SITUACIONES TENSAS Y CONFRONTACIÓN):\n"
+        "- 🎭 BROMAS Y REVELACIONES (PRANKS): La ejecución de una situación absurda o broma pesada, el momento exacto de desconcierto de la víctima y la revelación ('mira la cámara', carcajadas).\n"
+        "- ⚡ TENSIÓN Y CONFRONTACIÓN: Discusiones con extraños, personas hostiles, intervenciones de policías o seguridad, momentos incómodos ('cringe') o peligro inminente en la vía pública.\n"
+        "- 😱 REACCIONES DE SHOCK Y SUSTOS: Gritos genuinos, carcajadas incontrolables, sobresaltos o expresiones de asombro de peatones y del streamer.\n"
+        "- 💥 IMPREVISTOS Y CAOS URBANO: Caídas, accidentes leves, personajes extravagantes o espontáneos que interrumpen el en vivo.\n"
+        "- 🗣️ FRASES DE ALERTA Y REMATES: Intercambios verbales directos y tensos ('¡Qué miras!', '¡Cuidado!', '¡Párate ahí!', '¿Qué te pasa?').\n"
+        "- ⏱️ RITMO DINÁMICO: El clip debe empezar 3-5 segundos antes del incidente/broma para dar contexto, capturar el clímax y terminar justo en la reacción o remate."
+    ),
     "politica": (
         "CRITERIOS ESPECÍFICOS (POLÍTICA, DEBATE Y SHOW DE OPINIÓN):\n"
         "- Declaraciones polémicas, acusaciones directas, filtraciones o revelaciones.\n"
@@ -50,6 +60,10 @@ CONTENT_TYPE_PROMPTS: dict[str, str] = {
     ),
     "entrevista": (
         "CRITERIOS ESPECÍFICOS (ENTREVISTA Y PODCAST REFLEXIVO):\n"
+        "- El nicho del canal NO limita los temas: en una entrevista de negocios, una historia personal puede ser el mejor candidato.\n"
+        "- Busca pérdidas, familia, infancia, vulnerabilidad, fracasos, decisiones difíciles y progreso con hechos concretos; sin inventar intimidad ni premiar el sufrimiento por sí mismo.\n"
+        "- Cada historia necesita situación inicial, cambio o dificultad, y consecuencia o reflexión. Incluye la pregunta si la respuesta sola no se entiende.\n"
+        "- Compara candidatos personales, de superación, conflicto, humor y aprendizaje cuando existan; no llenes todos los cupos con consejos de negocios.\n"
         "- Ganchos intelectuales y revelaciones personales profundas.\n"
         "- Datos sorprendentes, historias de superación o anécdotas con impacto emotivo.\n"
         "- Remates inspiradores, moralejas y lecciones de vida con coherencia narrativa."
@@ -95,21 +109,46 @@ No te preocupes por el título definitivo ni por el contenido social: eso es tra
 Tu tarea es identificar con precisión los momentos más potentes, con timestamps exactos, contexto claro y un score honesto."""
 
 USER_PROMPT_TEMPLATE = """\
-Analiza la siguiente transcripción con timestamps y detecta exactamente {max_clips} fragmentos \
+Analiza la siguiente transcripción con timestamps y detecta HASTA {max_clips} fragmentos \
 con mayor potencial viral para TikTok/Reels/Shorts.
 
 DATOS DEL VIDEO:
 - Título: {video_title}
 - Canal / Creador: {video_channel}
 
+El título y el canal sirven de referencia, NO son una restricción temática.
+Para entrevistas/podcasts, evalúa también historias personales, vínculos familiares,
+pérdidas, fracasos y progreso, aunque el canal sea empresarial. Juzga la fuerza
+narrativa del fragmento, sin asumir que una revelación íntima garantiza viralidad.
+
 {content_criteria}
+
+{audio_peaks_context}
 
 EVITAR: introducciones genéricas, despedidas, silencios, transiciones sin contenido, relleno.
 
 REGLA CRÍTICA DE DURACIÓN:
-- DURACIÓN MÍNIMA: 20 segundos. DURACIÓN MÁXIMA: 90 segundos. Ideal: 30 a 60 segundos.
+- DURACIÓN MÍNIMA: 20 segundos. DURACIÓN MÁXIMA: 120 segundos.
+- Selecciona el mínimo intervalo que cuente una historia completa. Como guía,
+  una anécdota suele necesitar 45-90 segundos y puede llegar a 120 si lo exige su cierre.
+- Un clip de 20-35 segundos solo sirve si tiene contexto y conclusión propios;
+  no lo elijas por ser corto ni lo alargues con segundos arbitrarios.
 - NUNCA selecciones una sola frase aislada. Cada clip debe contener una idea completa con contexto, desarrollo y cierre.
 - Verifica que (end_seconds - start_seconds) >= 20.
+- Revisa el texto inmediatamente anterior y posterior antes de fijar límites.
+  No empieces con referencias sin antecedente ("eso", "él", "si tú quieres") ni
+  termines antes de la explicación, ejemplo o desenlace que da sentido al gancho.
+- Si el bloque no permite reconstruir el contexto y el cierre, descarta el candidato.
+
+PUNTUACIÓN EDITORIAL (no es una probabilidad de viralidad):
+- 30% relato autónomo: contexto, desarrollo y cierre entendibles sin ver el episodio.
+- 25% emoción, identificación o curiosidad auténticas.
+- 20% situación o revelación concreta, fiel a lo que se dice.
+- 15% gancho inicial y ritmo, sin sacrificar contexto.
+- 10% motivo específico para compartir o comentar.
+- Un grito o pico de volumen NO aumenta la puntuación por sí solo.
+- Reserva 9-10 para candidatos excepcionales; no asignes 10 a todos.
+- No rellenes cupos con frases genéricas o historias incompletas.
 
 REGLA CRÍTICA DE TIMESTAMPS:
 - Cada línea de la transcripción tiene su tiempo real entre corchetes, ej: "[34:15 - 35:02] ...".
@@ -138,12 +177,17 @@ Responde ÚNICAMENTE con JSON válido con esta estructura exacta:
     "key_argument": "La afirmación o argumento principal del hablante",
     "strongest_moment": "La frase o revelación más potente del fragmento",
     "reason": "Por qué este fragmento tiene potencial viral (específico)",
-    "score": 8
+    "score": 8,
+    "narrative_type": "personal",
+    "context_complete": true,
+    "context_reason": "Qué situación plantea, cómo la desarrolla y con qué cierra"
   }}
 ]}}
 
 NOTA: Los campos "core_idea", "surface_topic", "key_argument" y "strongest_moment" son opcionales en el JSON \
 pero muy valorados. Si el modelo los omite, el parsing seguirá funcionando correctamente.
+Usa narrative_type: personal, superacion, conflicto, aprendizaje, humor u otro.
+context_complete y context_reason deben justificar que el intervalo contiene el relato completo.
 
 Transcripción:
 {transcript}"""
@@ -152,6 +196,13 @@ Transcripción:
 # ── Stage 2: Social Content Analysis Prompts ─────────────────────────────────
 
 STAGE2_SYSTEM_PROMPT = """\
+La fidelidad al fragmento tiene prioridad absoluta sobre el atractivo del título.
+Usa únicamente afirmaciones presentes en la transcripción del intervalo indicado.
+No importes hechos del título del video ni de una idea central anterior.
+No inventes consecuencias, cifras, causalidad ni superlativos.
+El campo quote debe ser una cita textual continua de la transcripción que respalde
+el hook. No se permite parafrasear quote. Si el fragmento no demuestra una tesis
+dramática, escribe un título descriptivo y fiel.
 Eres un editor de contenido viral para TikTok, Instagram Reels y YouTube Shorts.
 Sabes exactamente cuál es la diferencia entre un buen fragmento de video y un buen clip para redes.
 Tu especialidad es encontrar el ángulo más interesante dentro de un fragmento y convertirlo en contenido que detenga el scroll.
@@ -260,7 +311,7 @@ Responde ÚNICAMENTE con JSON válido con esta estructura exacta:
   "hidden_angle": "El ángulo más potente e inesperado que encontraste",
   "hook": "El título/hook TikTok ganador (6-14 palabras)",
   "alternative_hooks": ["Hook alternativo 1", "Hook alternativo 2", "Hook alternativo 3"],
-  "quote": "La frase más memorable del clip (textual si es posible, parafraseada si es necesario)",
+  "quote": "Cita textual continua del intervalo que respalda el hook; nunca parafraseada",
   "social_description": "Descripción completa con estructura HOOK→EJEMPLO→IDEA→REFLEXIÓN(opcional)→PREGUNTA CTA→FUENTE",
   "hashtags": ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5"],
   "engagement_question": "Pregunta específica y concreta para generar comentarios",
@@ -437,6 +488,7 @@ def _call_groq(
     content_type: str = "general",
     video_title: str = "Video original",
     video_channel: str = "Canal de origen",
+    audio_peaks_context: str = "",
 ) -> list[ClipCandidate]:
     """Call the Groq API for Stage 1 clip detection and parse the response."""
     from groq import Groq
@@ -449,6 +501,7 @@ def _call_groq(
         transcript=transcript,
         video_title=video_title or "Video original",
         video_channel=video_channel or "Canal de origen",
+        audio_peaks_context=audio_peaks_context or "",
     )
 
     response = client.chat.completions.create(
@@ -474,6 +527,7 @@ def _call_gemini(
     content_type: str = "general",
     video_title: str = "Video original",
     video_channel: str = "Canal de origen",
+    audio_peaks_context: str = "",
 ) -> list[ClipCandidate]:
     """Call the Google Gemini API for Stage 1 clip detection and parse the response."""
     import google.generativeai as genai
@@ -491,6 +545,7 @@ def _call_gemini(
         transcript=transcript,
         video_title=video_title or "Video original",
         video_channel=video_channel or "Canal de origen",
+        audio_peaks_context=audio_peaks_context or "",
     )
 
     response = gem.generate_content(
@@ -540,7 +595,7 @@ def _call_groq_stage2(
             {"role": "system", "content": STAGE2_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.6,   # Higher temperature for more creative hook generation
+        temperature=0.2,
         max_tokens=2048,
     )
 
@@ -582,7 +637,7 @@ def _call_gemini_stage2(
     response = gem.generate_content(
         prompt,
         generation_config={
-            "temperature": 0.6,
+            "temperature": 0.2,
             "max_output_tokens": 2048,
             "response_mime_type": "application/json",
         },
@@ -621,7 +676,7 @@ def _deduplicate(clips: list[ClipCandidate], overlap_threshold: float = 0.5) -> 
     return kept
 
 
-MIN_CLIP_DURATION: float = 15.0
+MIN_CLIP_DURATION: float = 20.0
 MAX_CLIP_DURATION: float = 120.0
 
 
@@ -630,9 +685,8 @@ def _validate_and_sanitize_clips(
     segments: list[TranscriptSegment] | None = None,
 ) -> list[ClipCandidate]:
     """
-    Ensure every clip has a valid duration >= MIN_CLIP_DURATION (15s).
-    If a clip is between 5s and 14s, try expanding it to 30s-40s using transcript segments.
-    If it's under 5s and cannot be expanded to at least 15s, discard it.
+    Reject invalid ranges and explicitly incomplete narratives.
+    Duration alone cannot justify adding unrelated transcript seconds.
     """
     sanitized: list[ClipCandidate] = []
     max_video_time = segments[-1].end if segments else float("inf")
@@ -644,17 +698,10 @@ def _validate_and_sanitize_clips(
 
         dur = c.end_seconds - c.start_seconds
 
-        # If LLM generated a micro-clip (< 15s), try to expand to full context
-        if dur < MIN_CLIP_DURATION:
-            if segments and c.start_seconds < max_video_time:
-                target_end = min(max_video_time, c.start_seconds + 35.0)
-                for seg in segments:
-                    if seg.end >= target_end:
-                        target_end = seg.end
-                        break
-                if target_end - c.start_seconds >= MIN_CLIP_DURATION:
-                    c.end_seconds = round(target_end, 1)
-                    dur = c.end_seconds - c.start_seconds
+        if c.context_complete is False:
+            continue
+        if c.start_seconds < 0 or c.end_seconds > max_video_time:
+            continue
 
         # Only accept clips meeting the minimum duration
         if dur >= MIN_CLIP_DURATION and dur <= MAX_CLIP_DURATION:
@@ -746,6 +793,7 @@ def analyze_segments(
     progress_callback: ProgressCallback | None = None,
     video_title: str | None = None,
     video_channel: str | None = None,
+    audio_peaks: list[dict[str, Any]] | None = None,
 ) -> list[ClipCandidate]:
     """
     Analyze transcript segments and return the top viral clip candidates.
@@ -756,10 +804,11 @@ def analyze_segments(
         api_key: API key for the chosen provider.
         model: Specific model name, or None to use the provider default.
         max_clips: Maximum clips to return in total.
-        content_type: Target niche ('politica', 'entrevista', 'streaming', 'educativo', 'comedia', 'vlog', 'general').
+        content_type: Target niche ('irl_calle', 'politica', 'entrevista', 'streaming', 'educativo', 'comedia', 'vlog', 'general').
         progress_callback: Optional fn(current_chunk, total_chunks, error_msg).
         video_title: Source video title to provide context and attribution.
         video_channel: Source video channel name to provide context and attribution.
+        audio_peaks: Optional detected acoustic volume spikes (shouts, laughter, noise).
 
     Returns:
         List of ClipCandidate sorted by score descending, deduplicated.
@@ -790,6 +839,13 @@ def analyze_segments(
         end_s = chunk[-1].end if chunk else 0.0
         time_range = f"{int(start_s // 60):02d}:{int(start_s % 60):02d} - {int(end_s // 60):02d}:{int(end_s % 60):02d}"
 
+        # Context of audio peaks within this chunk's time window (+/- 5s)
+        chunk_peaks = [
+            p for p in (audio_peaks or [])
+            if not (end_s + 5.0 < p["start"] or start_s - 5.0 > p["end"])
+        ]
+        peaks_context = format_audio_peaks_for_prompt(chunk_peaks)
+
         try:
             transcript_text = format_segments(chunk)
             chunk_clips = caller(
@@ -800,6 +856,7 @@ def analyze_segments(
                 content_type=content_type,
                 video_title=v_title,
                 video_channel=v_chan,
+                audio_peaks_context=peaks_context,
             )
 
             # Reconcile any relative timestamps from LLM:
@@ -835,19 +892,21 @@ def analyze_segments(
             except TypeError:
                 progress_callback(i, total, error_msg)
 
+    # Correlate detected clips with audio peaks to boost score and mark high-intensity spikes
+    if audio_peaks:
+        for c in all_clips:
+            matched_peak = correlate_clip_with_peaks(c.start_seconds, c.end_seconds, audio_peaks)
+            if matched_peak:
+                spike_note = f" (Volumen acústico {matched_peak['intensity']}; no implica mayor calidad narrativa)"
+                if "volumen acústico" not in c.reason.lower():
+                    c.reason = f"{c.reason}{spike_note}"
+
     # Sanitize durations, deduplicate, sort, and limit
     all_clips = _validate_and_sanitize_clips(all_clips, segments)
     all_clips = _deduplicate(all_clips)
     all_clips.sort(key=lambda c: c.score, reverse=True)
 
-    # Fallback guarantee: Never return 0 clips if transcript segments exist
-    if not all_clips and segments:
-        all_clips = _generate_fallback_clips(
-            segments,
-            target_count=min(3, max_clips),
-            video_title=v_title,
-            video_channel=v_chan,
-        )
+    # Return fewer (or zero) candidates rather than padding with arbitrary slices.
 
     # Ensure all clip captions have the complete 4-part post description
     for c in all_clips:
@@ -873,6 +932,29 @@ def get_clip_segments(
     return [s for s in all_segments if s.end > start and s.start < end]
 
 
+def normalize_evidence(text: str) -> str:
+    return " ".join(re.findall(r"\w+", text.casefold()))
+
+
+def strict_clip_segments(clip, all_segments):
+    """Use word timing at boundaries; otherwise exclude partially covered text."""
+    selected = []
+    for segment in all_segments:
+        if segment.end <= clip.start_seconds or segment.start >= clip.end_seconds:
+            continue
+        if segment.words:
+            words = [w for w in segment.words if
+                     float(w["start"]) >= clip.start_seconds and float(w["end"]) <= clip.end_seconds]
+            if words:
+                selected.append(TranscriptSegment(
+                    text=" ".join(str(w["word"]).strip() for w in words),
+                    start=float(words[0]["start"]), end=float(words[-1]["end"]), words=words,
+                ))
+        elif segment.start >= clip.start_seconds and segment.end <= clip.end_seconds:
+            selected.append(segment)
+    return selected
+
+
 def enrich_clip_social_content(
     clip: ClipCandidate,
     all_segments: list[TranscriptSegment],
@@ -886,7 +968,7 @@ def enrich_clip_social_content(
     """
     Stage 2: Analyze a single clip's transcript and generate optimized social content.
 
-    Uses the full transcript of the clip (+ optional context padding) to find the
+    Uses only transcript evidence inside the clip boundaries to find the
     most interesting angle, generate hook candidates, select the winner, and produce
     a concrete social description.
 
@@ -900,7 +982,7 @@ def enrich_clip_social_content(
         model:            Specific model name, or None for provider default.
         video_title:      Original video title for context and attribution.
         video_channel:    Original video channel for context and attribution.
-        context_seconds:  Seconds of transcript to include before/after the clip.
+        context_seconds:  Retained for compatibility; outside context is not used for metadata.
 
     Returns:
         The same ClipCandidate, with Stage 2 fields populated.
@@ -912,14 +994,11 @@ def enrich_clip_social_content(
     v_title = (video_title or "Video original").strip()
     v_chan = (video_channel or "Canal de origen").strip()
 
-    # Extract clip transcript (with context padding)
-    clip_segs = get_clip_segments(clip, all_segments, context_seconds=context_seconds)
+    # Editorial metadata must never borrow dialogue outside the exported clip.
+    # context_seconds is retained for API compatibility, but is not evidence.
+    clip_segs = strict_clip_segments(clip, all_segments)
     if not clip_segs:
-        # Fallback: just use any segments near the clip
-        clip_segs = [
-            s for s in all_segments
-            if s.end > clip.start_seconds and s.start < clip.end_seconds
-        ]
+        raise ValueError("No hay transcripción verificable dentro del intervalo del clip.")
 
     transcript_text = format_segments(clip_segs)
     start_time = _fmt(clip.start_seconds)
@@ -933,11 +1012,16 @@ def enrich_clip_social_content(
         api_key=api_key,
         video_title=v_title,
         video_channel=v_chan,
-        core_idea=clip.core_idea or clip.reason or "",
-        surface_topic=clip.surface_topic or "",
+        core_idea="Derivar únicamente de la transcripción del intervalo.",
+        surface_topic="Derivar únicamente de la transcripción del intervalo.",
         start_time=start_time,
         end_time=end_time,
     )
+
+    evidence = normalize_evidence(" ".join(s.text for s in clip_segs))
+    quote = normalize_evidence(result.quote or "")
+    if not quote or quote not in evidence:
+        raise ValueError("La cita generada no aparece en el intervalo del clip. No se guardó el título.")
 
     # Apply Stage 2 results to clip
     clip.core_idea = result.core_idea
@@ -965,4 +1049,252 @@ def enrich_clip_social_content(
         ensure_caption_attribution(clip, video_title=video_title, video_channel=video_channel)
 
     return clip
+
+
+def generate_more_clips_for_video(
+    video_id: int,
+    target_count: int = 6,
+    provider: str | None = None,
+    model: str | None = None,
+    content_type: str | None = None,
+) -> dict[str, Any]:
+    """
+    Generate additional viral clips for an existing video by analyzing parts of
+    the transcript that have not yet been selected (or have minimal coverage).
+    Avoids duplicating or overlapping existing clips.
+    """
+    import os
+    import json
+    import concurrent.futures
+    from pathlib import Path
+    from sqlmodel import Session, col, select
+    from clipfinder.db import engine
+    from clipfinder.models import Video, Clip, ClipStatus, TranscriptSegment, ClipCandidate
+    from clipfinder.downloader import get_source_id
+
+    with Session(engine) as session:
+        video = session.get(Video, video_id)
+        if not video:
+            raise ValueError(f"Video con ID {video_id} no fue encontrado.")
+
+        existing_clips = session.exec(
+            select(Clip).where(Clip.video_id == video_id)
+        ).all()
+        existing_ranges = [(c.start_seconds, c.end_seconds) for c in existing_clips]
+
+        source = video.source_url or video.source_path or ""
+        source_id = get_source_id(source)
+        transcript_file = Path("outputs") / source_id / "transcript.json"
+        if not transcript_file.exists():
+            for p in Path("outputs").glob(f"*{source_id}*/transcript.json"):
+                transcript_file = p
+                break
+
+        if not transcript_file.exists():
+            raise FileNotFoundError(
+                f"No se encontró el archivo de transcripción para el video {video_id}. "
+                "Es necesario que la transcripción esté disponible en outputs."
+            )
+
+        raw_segs = json.loads(transcript_file.read_text(encoding="utf-8"))
+        segments = [TranscriptSegment(**x) for x in raw_segs]
+        if not segments:
+            raise ValueError("La transcripción está vacía.")
+
+        # Resolve provider & API key
+        chosen_provider: LLMProvider = (provider or video.provider or "gemini").lower()  # type: ignore
+        if chosen_provider not in ("groq", "gemini"):
+            chosen_provider = "gemini"
+
+        env_key = "GROQ_API_KEY" if chosen_provider == "groq" else "GEMINI_API_KEY"
+        api_key = os.getenv(env_key)
+        if not api_key:
+            raise ValueError(f"Falta la clave {env_key} en el entorno (.env).")
+
+        if not model:
+            model = GROQ_MODELS["default"] if chosen_provider == "groq" else GEMINI_MODELS["default"]
+
+        chosen_content_type = content_type or (video.cliente if video.cliente in CONTENT_TYPE_PROMPTS else "general")
+        if chosen_content_type not in CONTENT_TYPE_PROMPTS:
+            chosen_content_type = "general"
+
+        chunks = chunk_segments(segments)
+        if not chunks:
+            raise ValueError("No se pudieron generar bloques de transcripción.")
+
+        # Measure coverage of existing clips in each chunk
+        def chunk_coverage(chunk: list[TranscriptSegment]) -> float:
+            c_start = chunk[0].start
+            c_end = chunk[-1].end
+            cov = 0.0
+            for s, e in existing_ranges:
+                o_start = max(s, c_start)
+                o_end = min(e, c_end)
+                if o_end > o_start:
+                    cov += (o_end - o_start)
+            return cov
+
+        scored_chunks = [(i, c, chunk_coverage(c)) for i, c in enumerate(chunks)]
+        zero_cov = [sc for sc in scored_chunks if sc[2] == 0.0]
+        low_cov = [sc for sc in scored_chunks if sc[2] > 0.0]
+        low_cov.sort(key=lambda x: x[2])
+
+        # How many chunks to analyze to get target_count clips
+        # Each chunk asks for ~2 clips
+        chunks_needed = max(2, min(len(chunks), (target_count + 1) // 2 + 1))
+
+        selected_items = []
+        if len(zero_cov) >= chunks_needed:
+            # Distribute across zero_cov by original chunk index
+            zero_cov.sort(key=lambda x: x[0])
+            step = max(1, len(zero_cov) // chunks_needed)
+            selected_items = [zero_cov[i * step] for i in range(chunks_needed)]
+        else:
+            selected_items = list(zero_cov)
+            remaining = chunks_needed - len(selected_items)
+            selected_items.extend(low_cov[:remaining])
+
+        selected_items.sort(key=lambda x: x[0])
+
+        caller = _call_groq if chosen_provider == "groq" else _call_gemini
+        v_title = (video.title or "Video original").strip()
+        v_chan = (video.channel or "Canal de origen").strip()
+
+        def process_chunk(item: tuple[int, list[TranscriptSegment], float]) -> list[ClipCandidate]:
+            idx, chunk, _ = item
+            c_start = chunk[0].start
+            c_end = chunk[-1].end
+            transcript_text = format_segments(chunk)
+
+            try:
+                found = caller(
+                    transcript=transcript_text,
+                    max_clips=2 if target_count <= 6 else 3,
+                    model=model,
+                    api_key=api_key,
+                    content_type=chosen_content_type,
+                    video_title=v_title,
+                    video_channel=v_chan,
+                )
+                for c in found:
+                    if c_start > 90.0 and c.start_seconds < (c_start - 45.0):
+                        if (c_start + c.start_seconds) <= (c_end + 45.0):
+                            c.start_seconds = round(c_start + c.start_seconds, 1)
+                            c.end_seconds = round(c_start + c.end_seconds, 1)
+                return found
+            except Exception:
+                return []
+
+        raw_candidates: list[ClipCandidate] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(selected_items), 5)) as pool:
+            for res in pool.map(process_chunk, selected_items):
+                raw_candidates.extend(res)
+
+        # Validate and deduplicate candidates against each other
+        valid_candidates = _validate_and_sanitize_clips(raw_candidates, segments)
+        valid_candidates = _deduplicate(valid_candidates)
+
+        # Strict filter against existing clips in DB
+        strictly_new: list[ClipCandidate] = []
+        for cand in valid_candidates:
+            has_collision = False
+            cand_dur = cand.end_seconds - cand.start_seconds
+            if cand_dur <= 0:
+                continue
+            for ex_s, ex_e in existing_ranges:
+                ov_s = max(cand.start_seconds, ex_s)
+                ov_e = min(cand.end_seconds, ex_e)
+                if ov_e > ov_s:
+                    ov_len = ov_e - ov_s
+                    # If overlaps more than 25% of candidate or more than 15s
+                    if (ov_len / cand_dur) > 0.25 or ov_len > 15.0:
+                        has_collision = True
+                        break
+            if not has_collision:
+                strictly_new.append(cand)
+
+        strictly_new.sort(key=lambda c: c.score, reverse=True)
+        final_new = strictly_new[:target_count]
+
+        # Ensure captions have reflection and attribution
+        for c in final_new:
+            ensure_caption_attribution(c, video_title=video.title, video_channel=video.channel)
+
+        # Persist new clips to SQLite database
+        saved_db_clips: list[Clip] = []
+        for c in final_new:
+            hashtags_val = c.hashtags_str if hasattr(c, "hashtags_str") else (
+                ", ".join(c.hashtags) if isinstance(c.hashtags, list) else str(c.hashtags or "")
+            )
+            db_clip = Clip(
+                video_id=video_id,
+                start_seconds=c.start_seconds,
+                end_seconds=c.end_seconds,
+                title=c.title,
+                reason=c.reason,
+                score=c.score,
+                status=ClipStatus.prospecto,
+                caption=c.caption,
+                hashtags=hashtags_val,
+                core_idea=c.core_idea,
+                surface_topic=c.surface_topic,
+                stage2_done=False,
+            )
+            session.add(db_clip)
+            saved_db_clips.append(db_clip)
+
+        session.commit()
+        for sc in saved_db_clips:
+            session.refresh(sc)
+
+        # Fetch all clips in DB for this video
+        all_clips = session.exec(
+            select(Clip).where(Clip.video_id == video_id).order_by(col(Clip.score).desc())
+        ).all()
+
+        # Update clips.json on disk if directory exists
+        try:
+            clips_json_path = Path("outputs") / source_id / "clips.json"
+            if clips_json_path.parent.exists():
+                disk_clips_data = [
+                    {
+                        "start_seconds": cl.start_seconds,
+                        "end_seconds": cl.end_seconds,
+                        "title": cl.title,
+                        "reason": cl.reason,
+                        "score": cl.score,
+                        "caption": cl.caption,
+                        "hashtags": cl.hashtags,
+                    }
+                    for cl in all_clips
+                ]
+                clips_payload = {
+                    "video_source": video.source_url or video.source_path or "",
+                    "duration_seconds": video.duration_seconds,
+                    "clips": disk_clips_data,
+                }
+                clips_json_path.write_text(json.dumps(clips_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+        def format_clip(c: Clip) -> dict[str, Any]:
+            d = c.model_dump()
+            if isinstance(d.get("alternative_hooks"), str):
+                try:
+                    d["alternative_hooks"] = json.loads(d["alternative_hooks"])
+                except Exception:
+                    d["alternative_hooks"] = []
+            d["video_title"] = video.title
+            d["video_channel"] = video.channel
+            d["video_source_url"] = video.source_url or video.source_path
+            return d
+
+        return {
+            "success": True,
+            "new_clips_count": len(saved_db_clips),
+            "total_clips_count": len(all_clips),
+            "new_clips": [format_clip(c) for c in saved_db_clips],
+            "all_clips": [format_clip(c) for c in all_clips],
+        }
+
 

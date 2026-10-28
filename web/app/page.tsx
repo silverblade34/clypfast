@@ -31,6 +31,7 @@ import {
   X,
   Plus,
   Bot,
+  Music2,
 } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -102,12 +103,13 @@ export default function HomePage() {
     loadClients();
   }, []);
 
-  const isYouTubeUrl = (u: string) => /youtube\.com|youtu\.be/.test(u);
+  const isSupportedUrl = (u: string) =>
+    /youtube\.com|youtu\.be|twitch\.tv|kick\.com/i.test(u) || /^https?:\/\//i.test(u);
 
   /** Busca en la DB si la URL ya fue analizada. Se llama al perder el foco del input o al pegar. */
   async function checkHistory(inputUrl: string) {
     const cleanUrl = inputUrl.trim();
-    if (!cleanUrl || !isYouTubeUrl(cleanUrl) || cleanUrl === dismissedMatchUrl) {
+    if (!cleanUrl || !isSupportedUrl(cleanUrl) || cleanUrl === dismissedMatchUrl) {
       setHistoryMatch(null);
       return;
     }
@@ -135,8 +137,8 @@ export default function HomePage() {
     const cleanUrl = url.trim();
     if (!cleanUrl) return;
 
-    if (!isYouTubeUrl(cleanUrl)) {
-      setError("Por favor ingresa una URL válida de YouTube.");
+    if (!isSupportedUrl(cleanUrl)) {
+      setError("Por favor ingresa un link válido de YouTube, Twitch, Kick o video web.");
       return;
     }
 
@@ -215,13 +217,6 @@ export default function HomePage() {
 
   return (
     <div className="page-wrapper">
-      {/* Background orbs */}
-      <div className="bg-orbs">
-        <div className="bg-orb bg-orb-1" />
-        <div className="bg-orb bg-orb-2" />
-        <div className="bg-orb bg-orb-3" />
-      </div>
-
       {/* Top Navbar */}
       <header className={styles.header}>
         <div className={styles.headerInner}>
@@ -238,12 +233,15 @@ export default function HomePage() {
           </a>
 
           {/* Nav Pills */}
-          <nav className={styles.navPillContainer}>
+          <nav className={styles.navPillContainer} aria-label="Navegación principal">
             <a href="/" className={`${styles.navPill} ${styles.navPillActive}`}>
               Inicio
             </a>
             <a href="#analisis" className={styles.navPill}>
               Análisis
+            </a>
+            <a href="/music" className={styles.navPill}>
+              Música
             </a>
             <a href="/history" className={styles.navPill}>
               Historial
@@ -253,48 +251,39 @@ export default function HomePage() {
             </a>
           </nav>
 
-          {/* User Profile Pill */}
-          <div className={styles.userPill}>
-            <div className={styles.userAvatar}>M</div>
-            <span className={styles.userName}>Marcos</span>
-            <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
-          </div>
+          <span className={styles.studioLabel}><Film size={16} /> Estudio de clips</span>
         </div>
       </header>
 
       {/* Main Hero Section */}
       <main className={styles.main}>
+        <section className={styles.heroIntro}>
+          <div className={styles.badge}><Sparkles size={15} /> VIDEO · SUBTÍTULOS · MOMENTOS</div>
+          <h1 className={styles.heroTitle}>
+            De videos largos.<br />
+            <span className={styles.clipHighlight}>A clips que conectan.</span>
+          </h1>
+          <p className={styles.heroSubtitle}>
+            Encuentra los mejores momentos de tus videos, añade subtítulos y crea clips
+            listos para compartir. Empieza con un enlace de YouTube, Twitch o Kick.
+          </p>
+        </section>
         <div className={styles.heroGrid}>
-          {/* Left Column: Form & Features */}
           <div className={styles.leftCol}>
-            {/* Top pill badge */}
-            <div className={styles.badge}>
-              USO PERSONAL · POWERED BY GROQ + FASTER-WHISPER
-            </div>
-
-            {/* Headline */}
-            <h1 className={styles.heroTitle}>
-              De videos largos<br />
-              a <span className={styles.clipHighlight}>clips virales.</span>
-              <span className={styles.cursor}>|</span>
-            </h1>
-
-            {/* Subtitle */}
-            <p className={styles.heroSubtitle}>
-              Pega un link de YouTube y en minutos obtén los mejores momentos
-              con timestamps exactos, títulos sugeridos y clips listos para publicar.
-            </p>
-
             {/* Main Interactive Form Card */}
             <form onSubmit={handleAnalyze} className={styles.formCard} id="analisis">
-              {/* Input Row */}
+              <div className={styles.formHeading}>
+                <div><span className={styles.sectionEyebrow}>NUEVO ANÁLISIS</span><h2>Todo empieza con un video</h2></div>
+                <span className={styles.formIcon}><Link2 size={20} /></span>
+              </div>
+              <label className={styles.fieldLabel} htmlFor="youtube-url-input">Enlace del video</label>
               <div className={styles.inputRow}>
                 <span className={styles.inputIcon}>
                   <Link2 size={16} strokeWidth={2} />
                 </span>
                 <input
                   type="url"
-                  placeholder="https://youtube.com/watch?v=..."
+                  placeholder="https://www.youtube.com/watch?v=…"
                   value={url}
                   onChange={(e) => {
                     setUrl(e.target.value);
@@ -302,7 +291,7 @@ export default function HomePage() {
                   }}
                   onPaste={(e) => {
                     const pasted = e.clipboardData.getData("text");
-                    if (pasted && isYouTubeUrl(pasted)) {
+                    if (pasted && isSupportedUrl(pasted)) {
                       checkHistory(pasted);
                     }
                   }}
@@ -443,12 +432,12 @@ export default function HomePage() {
               )}
 
               {/* 2x2 Selectors Grid */}
-              <div className={styles.selectorsRow}>
-                {/* 1. Tipo de contenido (Enfoque IA) */}
+              <div className={styles.selectorsRow} id="configuracion">
+                {/* 1. Tipo de contenido */}
                 <div className={styles.selectBox}>
                   <div className={styles.selectHeader}>
                     <Sparkles size={12} strokeWidth={2} />
-                    <span>Tipo de contenido (Enfoque IA)</span>
+                    <span>Tipo de contenido</span>
                   </div>
                   <select
                     className={styles.selectNative}
@@ -462,11 +451,13 @@ export default function HomePage() {
                     }}
                     disabled={loading}
                     id="content-type-select"
+                    aria-label="Tipo de contenido"
                   >
+                    <option value="irl_calle">IRL Callejero, Bromas y Tensión</option>
+                    <option value="streaming">Streaming, Gaming y Reacciones</option>
                     <option value="vlog">Vlogs, Viajes y Restaurantes</option>
                     <option value="entrevista">Entrevistas y Podcasts</option>
                     <option value="politica">Política y Debate de Opinión</option>
-                    <option value="streaming">Streaming, Gaming y Reacciones</option>
                     <option value="educativo">Educativo, Negocios y Charlas</option>
                     <option value="comedia">Comedia y Entretenimiento</option>
                     <option value="general">General / Mixto</option>
@@ -488,6 +479,7 @@ export default function HomePage() {
                     onChange={(e) => setMaxClips(e.target.value)}
                     disabled={loading}
                     id="clips-select"
+                    aria-label="Clips a detectar"
                   >
                     <option value="5">5 clips virales</option>
                     <option value="8">8 clips virales</option>
@@ -512,6 +504,7 @@ export default function HomePage() {
                     onChange={(e) => setTranscriptionEngine(e.target.value)}
                     disabled={loading}
                     id="engine-select"
+                    aria-label="Motor de transcripción"
                   >
                     <option value="auto">Inteligente (Auto: Subs o Groq)</option>
                     <option value="groq">Groq Whisper Cloud (Ultra rápido)</option>
@@ -523,11 +516,11 @@ export default function HomePage() {
                   </span>
                 </div>
 
-                {/* 4. Modelo de Análisis IA (LLM) */}
+                {/* 4. Proveedor de análisis (LLM) */}
                 <div className={styles.selectBox}>
                   <div className={styles.selectHeader}>
                     <Bot size={12} strokeWidth={2} />
-                    <span>Modelo de Análisis IA</span>
+                    <span>Proveedor de análisis</span>
                   </div>
                   <select
                     className={styles.selectNative}
@@ -541,9 +534,10 @@ export default function HomePage() {
                     }}
                     disabled={loading}
                     id="provider-select"
+                    aria-label="Proveedor de análisis"
                   >
-                    <option value="groq">⚡ Groq (Llama / Compound - Recomendado)</option>
-                    <option value="gemini">✨ Google Gemini (3.5 Flash)</option>
+                    <option value="groq">Groq · Recomendado</option>
+                    <option value="gemini">Google Gemini</option>
                   </select>
                   <span className={styles.chevronIcon}>
                     <ChevronDown size={13} strokeWidth={2} />
@@ -592,6 +586,7 @@ export default function HomePage() {
                       disabled={loading}
                       className={styles.inputNative}
                       id="cliente-input"
+                    aria-label="Cliente o marca"
                       autoFocus={isCreatingNewClient}
                     />
                   ) : (
@@ -609,14 +604,15 @@ export default function HomePage() {
                       }}
                       disabled={loading}
                       id="cliente-select"
+                    aria-label="Cliente o marca"
                     >
                       <option value="">Sin cliente (General)</option>
                       {clientList.map((c) => (
                         <option key={c} value={c}>
-                          🏷️ {c}
+                          {c}
                         </option>
                       ))}
-                      <option value="__NEW__">➕ Registrar nuevo cliente...</option>
+                      <option value="__NEW__">Registrar nuevo cliente…</option>
                     </select>
                   )}
                   {!isCreatingNewClient && clientList.length > 0 && (
@@ -663,8 +659,8 @@ export default function HomePage() {
                 <div className={styles.featureIconWrap}>
                   <FileText className="h-5 w-5 text-cyan-400" />
                 </div>
-                <h4 className={styles.featureTitle}>Transcripción local</h4>
-                <p className={styles.featureDesc}>faster-whisper en tu equipo</p>
+                <h4 className={styles.featureTitle}>Transcripción</h4>
+                <p className={styles.featureDesc}>Local o en la nube</p>
               </div>
 
               {/* Feature 2 */}
@@ -681,7 +677,7 @@ export default function HomePage() {
                 <div className={styles.featureIconWrap}>
                   <Play className="h-5 w-5 text-cyan-400" />
                 </div>
-                <h4 className={styles.featureTitle}>Preview en tiempo real</h4>
+                <h4 className={styles.featureTitle}>Vista previa</h4>
                 <p className={styles.featureDesc}>Salta al momento exacto</p>
               </div>
 
@@ -698,35 +694,30 @@ export default function HomePage() {
             {/* Bottom privacy note */}
             <div className={styles.privacyNote}>
               <ShieldCheck className="h-4 w-4 text-neutral-400" />
-              <span>Procesamiento local · Tu contenido no se almacena</span>
+              <span>Tus análisis y clips, organizados en tu historial.</span>
             </div>
           </div>
 
-          {/* Right Column: Hero Visual Showcase */}
-          <div className={styles.rightCol}>
-            <div className={styles.showcaseWrapper}>
-              <div className={styles.showcaseGlow} />
-              <Image
-                src="/hero-section.png"
-                alt="ClipFinder Showcase"
-                width={760}
-                height={510}
-                className={styles.heroImage}
-                priority
-              />
-            </div>
-
-            {/* Tagline footer underneath showcase */}
-            <div className={styles.showcaseTagline}>
-              <div className={styles.taglineTitle}>
-                Convierte conversaciones en contenido que conecta
+          <aside className={styles.rightCol}>
+            <div className={styles.showcaseCard}>
+              <div className={styles.showcaseHeader}><span className={styles.sectionEyebrow}>DEL VIDEO AL CLIP</span><span className={styles.previewBadge}><Play size={11} /> Tu próximo contenido</span></div>
+              <div className={styles.showcaseWrapper}>
+                <Image src="/hero-section.png" alt="Vista de un video convertido en clips verticales con subtítulos" width={760} height={510} className={styles.heroImage} priority />
               </div>
-              <div className={styles.taglineDivider} />
-              <div className={styles.taglineDesc}>
-                Ahorra horas de edición manual y enfócate en lo que importa: crear contenido con impacto.
+              <div className={styles.showcaseTagline}>
+                <h2>Menos edición.<br />Más momentos que compartir.</h2>
+                <p>Detecta, revisa y personaliza tus clips desde un solo lugar.</p>
+              </div>
+              <div className={styles.workflow} aria-label="Flujo de trabajo">
+                <span><b>01</b> Analiza</span><span><b>02</b> Personaliza</span><span><b>03</b> Exporta</span>
               </div>
             </div>
-          </div>
+            <a href="/music" className={styles.musicCard}>
+              <span className={styles.musicIcon}><Music2 size={22} /></span>
+              <span><small>EXPLORA OTRO ESTUDIO</small><strong>¿Tu próximo clip es una canción?</strong><span>Letra, traducción y momentos musicales.</span></span>
+              <ArrowRight size={19} className={styles.musicArrow} />
+            </a>
+          </aside>
         </div>
       </main>
     </div>

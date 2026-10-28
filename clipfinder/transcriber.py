@@ -39,9 +39,10 @@ def transcribe(
     device: str = "auto",
     compute_type: str = "auto",
     vad_filter: bool = True,
-    beam_size: int = 1,
+    beam_size: int = 5,
     cpu_threads: int = 8,
     progress_callback: Callable[[int, int], None] | None = None,
+    stage_callback: Callable[[str], None] | None = None,
 ) -> tuple[list[TranscriptSegment], float]:
     """
     Transcribe an audio file using faster-whisper optimized for Apple Silicon CPU.
@@ -53,7 +54,7 @@ def transcribe(
         device: 'auto', 'cpu', or 'cuda'.
         compute_type: 'auto', 'int8', 'float16', 'float32'.
         vad_filter: Apply voice activity detection to filter silence.
-        beam_size: 1 = greedy decoding (3x-4x faster, optimal for CPU with negligible WER loss).
+        beam_size: Search width; 5 prioritizes accuracy over greedy decoding speed.
         cpu_threads: Number of CPU threads (default 8 for M3 Pro performance cores).
         progress_callback: Optional fn(pct: int, n_segments: int) called per segment.
 
@@ -71,14 +72,32 @@ def transcribe(
     if compute_type == "auto":
         compute_type = "float16" if device == "cuda" else "int8"
 
+    model_source = model_size
+    try:
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+        try:
+            cached = Path(snapshot_download(f"Systran/faster-whisper-{model_size}", local_files_only=True,
+                                            allow_patterns=["model.bin", "config.json", "tokenizer.json", "vocabulary.*"]))
+            if all((cached / filename).is_file() for filename in ("model.bin", "config.json", "tokenizer.json")):
+                model_source = str(cached)
+        except (LocalEntryNotFoundError, OSError):
+            pass
+    except ImportError:
+        pass
+    if stage_callback:
+        stage_callback("Cargando Whisper desde el modelo local…" if model_source != model_size
+                       else "Descargando o preparando el modelo Whisper por primera vez…")
     model = WhisperModel(
-        model_size,
+        model_source,
         device=device,
         compute_type=compute_type,
         cpu_threads=cpu_threads,
         download_root=None,  # uses HuggingFace cache (~/.cache/huggingface)
     )
 
+    if stage_callback:
+        stage_callback("Whisper local: analizando el primer fragmento de audio…")
     segments_gen, info = model.transcribe(
         str(audio_path),
         language=language,
@@ -90,7 +109,7 @@ def transcribe(
             "min_silence_duration_ms": 500,
             "speech_pad_ms": 200,
         },
-        word_timestamps=False,
+        word_timestamps=True,
         condition_on_previous_text=False,
     )
 
@@ -106,6 +125,8 @@ def transcribe(
                 text=text,
                 start=round(seg.start, 2),
                 end=round(seg.end, 2),
+                words=[{"word": w.word.strip(), "start": round(w.start, 2),
+                        "end": round(w.end, 2)} for w in (seg.words or [])],
             )
         )
         if progress_callback:

@@ -42,6 +42,7 @@ interface Props {
   videoUrl?: string;
   videoTitle?: string;
   videoChannel?: string;
+  isNewlyAdded?: boolean;
 }
 
 export function toFirstPersonReflection(reason?: string, title?: string): string {
@@ -246,7 +247,17 @@ function deriveTags(hashtags?: string | string[], title?: string, reason?: strin
   return tags.slice(0, 3);
 }
 
-export default function ClipCard({ clip, index, isActive, onJump, videoId, videoUrl, videoTitle, videoChannel }: Props) {
+export default function ClipCard({
+  clip,
+  index,
+  isActive,
+  onJump,
+  videoId,
+  videoUrl,
+  videoTitle,
+  videoChannel,
+  isNewlyAdded = false,
+}: Props) {
   const router = useRouter();
   const [startSec, setStartSec] = useState(clip.start_seconds);
   const [endSec, setEndSec] = useState(clip.end_seconds);
@@ -442,8 +453,8 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
   return (
     <>
       <div
-        className={`${styles.card} ${isActive ? styles.cardActive : ""}`}
-        id={`clip-card-${index}`}
+        className={`${styles.card} ${isActive ? styles.cardActive : ""} ${isNewlyAdded ? styles.cardNewlyAdded : ""}`}
+        id={clip.id ? `clip-${clip.id}` : `clip-card-${index}`}
       >
         {isActive && (
           <div className={styles.activeBanner}>
@@ -525,6 +536,27 @@ export default function ClipCard({ clip, index, isActive, onJump, videoId, video
                   >
                     <span>✨</span>
                     <span>Enfoque IA</span>
+                  </div>
+                )}
+                {isNewlyAdded && (
+                  <div
+                    title="Clip generado recientemente"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      color: "#38bdf8",
+                      background: "rgba(56, 189, 248, 0.15)",
+                      border: "1px solid rgba(56, 189, 248, 0.4)",
+                      borderRadius: "999px",
+                      padding: "2px 8px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span>✨</span>
+                    <span>Nuevo</span>
                   </div>
                 )}
                 <div

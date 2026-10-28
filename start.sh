@@ -40,14 +40,14 @@ FASTAPI_PID=$!
 
 sleep 2  # Give FastAPI a moment to start
 
-echo -e "${GREEN}▶ Starting Next.js frontend on http://localhost:3000${NC}"
-cd web && npm run dev -- --port 3000 &
+echo -e "${GREEN}▶ Starting Next.js frontend on http://localhost:4030${NC}"
+cd web && npm run dev -- --port 4030 &
 NEXTJS_PID=$!
 
 echo ""
 echo "════════════════════════════════════"
 echo -e "  ${CYAN}Backend:${NC}  http://localhost:8000"
-echo -e "  ${CYAN}Frontend:${NC} http://localhost:3000  ← Open this"
+echo -e "  ${CYAN}Frontend:${NC} http://localhost:4030  ← Open this"
 echo "════════════════════════════════════"
 echo ""
 echo "Press Ctrl+C to stop both servers."

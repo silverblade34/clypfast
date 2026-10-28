@@ -21,7 +21,7 @@ def transcribe_with_groq(
     audio_path: Path,
     api_key: str | None = None,
     language: str | None = None,
-    model: str = "whisper-large-v3-turbo",
+    model: str = "whisper-large-v3",
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> tuple[list[TranscriptSegment], float]:
     """
@@ -48,8 +48,8 @@ def transcribe_with_groq(
     # 1. Probe total duration of audio
     total_duration = _probe_duration(audio_path)
 
-    # 2. Compress audio to 32kbps 16kHz mono MP3 to minimize file size
-    compressed_path = audio_path.parent / f"{audio_path.stem}_groq_opt.mp3"
+    # Lossless 16 kHz mono preserves speech details without a lossy MP3 pass.
+    compressed_path = audio_path.parent / f"{audio_path.stem}_groq_opt.flac"
     _compress_audio(audio_path, compressed_path)
 
     try:
@@ -128,6 +128,7 @@ def _transcribe_file(
             "model": model,
             "response_format": "verbose_json",
             "temperature": 0.0,
+            "timestamp_granularities": ["segment", "word"],
         }
         if language:
             kwargs["language"] = language
@@ -135,6 +136,8 @@ def _transcribe_file(
         resp = client.audio.transcriptions.create(**kwargs)
 
     raw_segments = getattr(resp, "segments", []) or []
+    raw_words = getattr(resp, "words", []) or []
+    words = [w if isinstance(w, dict) else w.model_dump() for w in raw_words]
     segments: list[TranscriptSegment] = []
 
     for seg in raw_segments:
@@ -154,6 +157,10 @@ def _transcribe_file(
                     text=text,
                     start=round(start + time_offset, 2),
                     end=round(end + time_offset, 2),
+                    words=[{"word": str(w.get("word", "")).strip(),
+                            "start": round(float(w["start"]) + time_offset, 2),
+                            "end": round(float(w["end"]) + time_offset, 2)}
+                           for w in words if start <= float(w["start"]) < end],
                 )
             )
 
@@ -177,14 +184,14 @@ def _probe_duration(audio_path: Path) -> float:
 
 
 def _compress_audio(input_path: Path, output_path: Path) -> None:
-    """Compress audio to 32kbps mono 16kHz MP3 for fast upload to Groq."""
+    """Prepare lossless mono 16 kHz FLAC for transcription."""
     cmd = [
         "ffmpeg",
         "-y",
         "-i", str(input_path),
         "-ar", "16000",
         "-ac", "1",
-        "-b:a", "32k",
+        "-c:a", "flac",
         str(output_path),
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -192,7 +199,7 @@ def _compress_audio(input_path: Path, output_path: Path) -> None:
 
 def _split_audio(input_path: Path, chunk_duration_sec: int) -> list[tuple[Path, float]]:
     """Split audio file into chunks of chunk_duration_sec without re-encoding."""
-    output_pattern = str(input_path.parent / f"{input_path.stem}_part_%03d.mp3")
+    output_pattern = str(input_path.parent / f"{input_path.stem}_part_%03d.flac")
     cmd = [
         "ffmpeg",
         "-y",
@@ -208,7 +215,7 @@ def _split_audio(input_path: Path, chunk_duration_sec: int) -> list[tuple[Path, 
     parent = input_path.parent
     prefix = f"{input_path.stem}_part_"
 
-    for p in sorted(parent.glob(f"{prefix}*.mp3")):
+    for p in sorted(parent.glob(f"{prefix}*.flac")):
         # Extract part index to compute timestamp offset
         part_str = p.stem.replace(prefix, "")
         try:

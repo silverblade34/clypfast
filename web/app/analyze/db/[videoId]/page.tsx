@@ -21,6 +21,8 @@ import {
   Pencil,
   Check,
   Flame,
+  Sparkles,
+  AlertCircle,
 } from "lucide-react";
 import YouTubePlayer, { YouTubePlayerRef } from "@/components/YoutubePlayer";
 import ClipCard, { Clip } from "@/components/ClipCard";
@@ -78,6 +80,13 @@ export default function DbAnalyzePage({
   const [sortBy, setSortBy] = useState<"score" | "time" | "duration">("score");
   const [copiedShare, setCopiedShare] = useState(false);
 
+  // ── Generar más clips state ────────────────────────────────────────────────
+  const [isGeneratingMore, setIsGeneratingMore] = useState(false);
+  const [generateCount, setGenerateCount] = useState<number>(6);
+  const [newlyGeneratedClipIds, setNewlyGeneratedClipIds] = useState<number[]>([]);
+  const [generateSuccessMsg, setGenerateSuccessMsg] = useState<string | null>(null);
+  const [generateErrorMsg, setGenerateErrorMsg] = useState<string | null>(null);
+
   const playerRef = useRef<YouTubePlayerRef>(null);
 
   // ── Cargar video y clips desde la DB ───────────────────────────────────────
@@ -125,6 +134,64 @@ export default function DbAnalyzePage({
     }, 600);
     return () => clearInterval(timer);
   }, []);
+
+  // ── Generar más clips handler ──────────────────────────────────────────────
+  const handleGenerateMoreClips = async (count: number = 6) => {
+    if (isGeneratingMore) return;
+    setIsGeneratingMore(true);
+    setGenerateErrorMsg(null);
+    setGenerateSuccessMsg(null);
+
+    try {
+      const res = await fetch(`/api/videos/${videoId}/generate-more-clips`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Error al generar más clips.");
+      }
+
+      if (data.new_clips && data.new_clips.length > 0) {
+        const newIds: number[] = data.new_clips.map((c: Clip) => c.id).filter(Boolean);
+        setNewlyGeneratedClipIds(newIds);
+
+        if (data.all_clips) {
+          setClips(data.all_clips);
+        } else {
+          setClips((prev) => [...prev, ...data.new_clips]);
+        }
+
+        setGenerateSuccessMsg(`¡${data.new_clips.length} nuevos momentos virales encontrados!`);
+
+        // Scroll to the first newly added clip after render
+        setTimeout(() => {
+          const firstNewId = newIds[0];
+          if (firstNewId) {
+            const el = document.getElementById(`clip-${firstNewId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }
+        }, 350);
+
+        // Clear highlight and message after 7 seconds
+        setTimeout(() => {
+          setNewlyGeneratedClipIds([]);
+          setGenerateSuccessMsg(null);
+        }, 7000);
+      } else {
+        setGenerateSuccessMsg("No se encontraron más momentos nuevos sin solapamiento en este video.");
+        setTimeout(() => setGenerateSuccessMsg(null), 4000);
+      }
+    } catch (err: any) {
+      setGenerateErrorMsg(err?.message || "Error al conectar con el servidor.");
+    } finally {
+      setIsGeneratingMore(false);
+    }
+  };
 
   // ── Jump to clip ────────────────────────────────────────────────────────────
   function handleJump(startSeconds: number, clipOrIdx?: Clip | number) {
@@ -470,7 +537,7 @@ export default function DbAnalyzePage({
                       <p>Video no disponible para reproducción incrustada.</p>
                       {video.source_url && (
                         <a href={video.source_url} target="_blank" rel="noopener noreferrer">
-                          Ver fuente original en YouTube →
+                          Ver video original ↗
                         </a>
                       )}
                     </div>
@@ -508,18 +575,41 @@ export default function DbAnalyzePage({
                     </p>
                   </div>
 
-                  {/* Sort Dropdown */}
-                  <div className={styles.sortSelectWrapper}>
-                    <span>Ordenar por:</span>
-                    <select
-                      className={styles.sortSelect}
-                      value={sortBy}
-                      onChange={(e) => setSortBy(e.target.value as "score" | "time" | "duration")}
+                  {/* Right Header Controls: Generate More + Sort */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className={styles.headerGenerateMoreBtn}
+                      onClick={() => handleGenerateMoreClips(generateCount)}
+                      disabled={isGeneratingMore}
+                      title="Buscar más momentos virales en fragmentos no explorados"
                     >
-                      <option value="score">Score</option>
-                      <option value="time">Inicio en video</option>
-                      <option value="duration">Duración</option>
-                    </select>
+                      {isGeneratingMore ? (
+                        <>
+                          <span className="spinner spinner-xs" />
+                          <span>Buscando clips...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={13} />
+                          <span>+ Generar más</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Sort Dropdown */}
+                    <div className={styles.sortSelectWrapper}>
+                      <span>Ordenar por:</span>
+                      <select
+                        className={styles.sortSelect}
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value as "score" | "time" | "duration")}
+                      >
+                        <option value="score">Score</option>
+                        <option value="time">Inicio en video</option>
+                        <option value="duration">Duración</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -542,10 +632,96 @@ export default function DbAnalyzePage({
                         videoUrl={video.source_url ?? undefined}
                         videoTitle={video.title}
                         videoChannel={video.channel ?? undefined}
+                        isNewlyAdded={clip.id ? newlyGeneratedClipIds.includes(clip.id) : false}
                       />
                     ))}
                   </div>
                 )}
+
+                {/* ── Generar Más Clips Card (Bottom of List) ───────────── */}
+                <div className={styles.generateMoreCard}>
+                  <div className={styles.generateMoreInner}>
+                    <div className={styles.generateMoreInfo}>
+                      <div className={styles.generateMoreBadge}>
+                        <Sparkles size={13} className={styles.sparkleIcon} />
+                        <span>Explorador de Contenido IA</span>
+                      </div>
+                      <h3 className={styles.generateMoreTitle}>
+                        ¿Quieres más clips virales de este video?
+                      </h3>
+                      <p className={styles.generateMoreDesc}>
+                        {video.duration_seconds > 0
+                          ? `Este video dura ${formatDuration(video.duration_seconds)}. Analizaremos fragmentos no cubiertos sin repetir los ${clips.length} momentos actuales.`
+                          : "Buscaremos nuevos momentos de alto impacto evitando repetir los clips ya detectados."}
+                      </p>
+                    </div>
+
+                    <div className={styles.generateMoreActions}>
+                      {/* Selector de cantidad */}
+                      <div className={styles.generateCountSelector}>
+                        <span>Cantidad:</span>
+                        <button
+                          type="button"
+                          className={`${styles.countPill} ${generateCount === 3 ? styles.countPillActive : ""}`}
+                          onClick={() => setGenerateCount(3)}
+                          disabled={isGeneratingMore}
+                        >
+                          +3
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.countPill} ${generateCount === 6 ? styles.countPillActive : ""}`}
+                          onClick={() => setGenerateCount(6)}
+                          disabled={isGeneratingMore}
+                        >
+                          +6 (Recomendado)
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.countPill} ${generateCount === 12 ? styles.countPillActive : ""}`}
+                          onClick={() => setGenerateCount(12)}
+                          disabled={isGeneratingMore}
+                        >
+                          +12
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        className={styles.generateMoreBtn}
+                        onClick={() => handleGenerateMoreClips(generateCount)}
+                        disabled={isGeneratingMore}
+                      >
+                        {isGeneratingMore ? (
+                          <>
+                            <span className="spinner spinner-sm" />
+                            <span>Buscando nuevos clips...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={16} />
+                            <span>Generar +{generateCount} clips más</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Status / Feedback messages */}
+                  {generateSuccessMsg && (
+                    <div className={styles.generateSuccessBanner}>
+                      <Check size={16} />
+                      <span>{generateSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  {generateErrorMsg && (
+                    <div className={styles.generateErrorBanner}>
+                      <AlertCircle size={16} />
+                      <span>{generateErrorMsg}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </>

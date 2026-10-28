@@ -20,6 +20,24 @@ def is_url(source: str) -> bool:
         return False
 
 
+def detect_platform(source: str) -> str:
+    """Return 'youtube', 'twitch', 'kick', 'generic_url', or 'local'."""
+    if not is_url(source):
+        return "local"
+    try:
+        parsed = urlparse(source)
+        host = (parsed.hostname or "").lower()
+        if "youtube.com" in host or "youtu.be" in host:
+            return "youtube"
+        if "twitch.tv" in host:
+            return "twitch"
+        if "kick.com" in host:
+            return "kick"
+        return "generic_url"
+    except Exception:
+        return "generic_url"
+
+
 def get_source_id(source: str) -> str:
     """Return a clean, filesystem-safe identifier for this source."""
     if is_url(source):
@@ -28,24 +46,65 @@ def get_source_id(source: str) -> str:
 
 
 def _extract_video_id(url: str) -> str:
-    """Best-effort extraction of YouTube video ID from various URL formats."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
+    """Best-effort extraction of video ID from YouTube, Twitch, Kick or generic URLs."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.strip("/")
+        parts = [p for p in path.split("/") if p]
 
-    if "youtu.be" in host:
-        return parsed.path.lstrip("/").split("?")[0] or "video"
+        # ── YouTube ──
+        if "youtu.be" in host:
+            return parts[0] if parts else "yt_video"
 
-    if "youtube.com" in host:
-        if parsed.path == "/watch":
+        if "youtube.com" in host:
+            if parsed.path == "/watch":
+                qs = parse_qs(parsed.query)
+                return qs.get("v", ["yt_video"])[0]
+            if parsed.path.startswith("/shorts/") and len(parts) >= 2:
+                return parts[1]
+            if parsed.path.startswith("/embed/") and len(parts) >= 2:
+                return parts[1]
+            if parts:
+                return parts[-1]
+
+        # ── Twitch ──
+        if "twitch.tv" in host:
+            # Clips: clips.twitch.tv/ClipId or twitch.tv/user/clip/ClipId
+            if "clips.twitch.tv" in host and parts:
+                return f"twitch_clip_{parts[0]}"
+            if len(parts) >= 3 and parts[1] == "clip":
+                return f"twitch_clip_{parts[2]}"
+            # VODs: twitch.tv/videos/123456789
+            if len(parts) >= 2 and parts[0] == "videos":
+                return f"twitch_{parts[1]}"
+            # Live / Channel: twitch.tv/streamer
+            if parts:
+                return f"twitch_{parts[0]}"
+
+        # ── Kick ──
+        if "kick.com" in host:
+            # Clips: kick.com/streamer?clip=clip_01HQ...
             qs = parse_qs(parsed.query)
-            return qs.get("v", ["video"])[0]
-        if parsed.path.startswith("/shorts/"):
-            return parsed.path.split("/")[2]
-        if parsed.path.startswith("/embed/"):
-            return parsed.path.split("/")[2]
+            if "clip" in qs and qs["clip"]:
+                return f"kick_clip_{qs['clip'][0]}"
+            # VODs: kick.com/video/uuid or kick.com/streamer/videos/uuid
+            if len(parts) >= 2 and parts[0] == "video":
+                return f"kick_{parts[1]}"
+            if len(parts) >= 3 and parts[1] == "videos":
+                return f"kick_{parts[2]}"
+            if parts:
+                return f"kick_{parts[0]}"
 
-    # Fallback: use last path segment
-    return parsed.path.rstrip("/").split("/")[-1] or "video"
+        # ── Fallback ──
+        if parts:
+            safe_part = "".join(c for c in parts[-1] if c.isalnum() or c in ("-", "_"))
+            if safe_part:
+                return safe_part[:50]
+    except Exception:
+        pass
+
+    return "video"
 
 
 def download_audio(
@@ -152,10 +211,12 @@ def _convert_to_wav(input_path: Path, output_path: Path) -> None:
 
 def extract_media_metadata(source: str) -> dict[str, Any]:
     """
-    Extract metadata (title, channel, duration) without downloading the media.
-    Works for both YouTube URLs and local file paths.
+    Extract metadata (title, channel, duration, thumbnail, platform) without downloading media.
+    Works for YouTube, Twitch, Kick URLs and local file paths.
     """
     import yt_dlp
+
+    platform = detect_platform(source)
 
     if is_url(source):
         opts: Any = {
@@ -174,10 +235,13 @@ def extract_media_metadata(source: str) -> dict[str, Any]:
                     )
                     title = info.get("title")
                     duration = float(info.get("duration") or 0)
+                    thumbnail = info.get("thumbnail")
                     return {
                         "title": title,
                         "channel": channel,
                         "duration": duration,
+                        "thumbnail": thumbnail,
+                        "platform": platform,
                     }
         except Exception as exc:
             logger.warning("Failed to extract metadata for %s: %s", source, exc)
@@ -187,6 +251,9 @@ def extract_media_metadata(source: str) -> dict[str, Any]:
             "title": p.stem,
             "channel": None,
             "duration": 0.0,
+            "thumbnail": None,
+            "platform": platform,
         }
 
-    return {"title": None, "channel": None, "duration": 0.0}
+    return {"title": None, "channel": None, "duration": 0.0, "thumbnail": None, "platform": platform}
+
