@@ -46,34 +46,8 @@ interface Props {
 }
 
 export function toFirstPersonReflection(reason?: string, title?: string): string {
-  const r = (reason || "").trim();
-  if (!r) {
-    return "Para mí, la clave está en no quedarse solo en la teoría y aplicar esto con método para ver resultados tangibles.";
-  }
-
-  // Check if already written in first person
-  if (/\b(yo|mi\b|mis\b|creo|siento|he aprendido|pienso|para m[ií]|me di cuenta|me hizo|siempre he)\b/i.test(r)) {
-    return r;
-  }
-
-  // Strip editorial meta-analysis endings
-  let clean = r.replace(/,?\s*(?:generando|lo que genera|ideal para|lo que hace que|haciendo que|dejando una lección|con alto potencial|creando identificaci[oó]n|para captar).*$/i, "").trim();
-  clean = clean.replace(/\.+$/, "");
-
-  // Match leading third-person verbs (Expone, Muestra, Explica, Enseña, Aborda, Destaca, Describe, Detalla, Presenta, Revela, Refleja, Demuestra, Ofrece)
-  const openerMatch = clean.match(/^(?:Expone|Muestra|Explica|Enseña|Aborda|Destaca|Describe|Detalla|Presenta|Revela|Refleja|Demuestra|Ofrece)\s+(.*)$/i);
-  const rest = openerMatch && openerMatch[1] ? openerMatch[1].trim() : clean;
-  const formattedRest = rest.length > 1 ? rest.charAt(0).toLowerCase() + rest.slice(1) : rest;
-
-  if (/^(?:un|una|el|la)\s+(?:dolor|problema|error|riesgo|caos|falla|descuadre)/i.test(formattedRest)) {
-    return `Para mí, esto toca un punto crítico: ${formattedRest}. Si no atacas la raíz de esto a tiempo, terminas perdiendo recursos valiosos y frenando el crecimiento de tu operación.`;
-  }
-
-  if (/^(?:un|una|el|la)\s+(?:cambio|giro|oportunidad|lecci[oó]n|método|forma|estrategia|hack|secreto)/i.test(formattedRest)) {
-    return `Para mí, el verdadero valor de este momento es ${formattedRest}. Aplicar este enfoque en la práctica te ahorra semanas de ensayo y error, y eleva la calidad de tus resultados.`;
-  }
-
-  return `Mi conclusión sobre esto es directa: ${formattedRest}. Tener claridad sobre este principio y aplicarlo con método es lo que realmente marca la diferencia en los resultados.`;
+  // Deprecated: reflexiones automáticas eliminadas por falta de redacción humana.
+  return "";
 }
 
 export function buildPostDescription({
@@ -97,10 +71,13 @@ export function buildPostDescription({
   startSec?: number;
   hashtags?: string[] | string;
 }): string {
-  const text = (caption || title || "").trim();
+  let text = (caption || title || "").trim();
 
-  // ONLY treat as having reflection if "reflexión:" is explicitly present (NEVER check for "💡" alone, as hooks use it!)
-  const hasReflection = /(?:^|\s)(?:💡\s*)?reflexi[oó]n:/i.test(text);
+  // Strip any old robotic reflection blocks from existing captions
+  text = text
+    .replace(/(?:^|\n)\s*(?:💡\s*)?[Rr]eflexi[oó]n:[\s\S]*?(?=\n\n|\n📌|\n🎙|\n¿|$)/g, "")
+    .trim();
+
   const hasVideo = /(?:^|\n)\s*📌\s*video:/i.test(text);
   const hasChannel = /(?:^|\n)\s*🎙\s*canal:/i.test(text);
 
@@ -111,13 +88,7 @@ export function buildPostDescription({
     blocks.push(text);
   }
 
-  // 2. Reflexión de valor táctico en primera persona
-  if (!hasReflection && reason) {
-    const fp = toFirstPersonReflection(reason, title);
-    blocks.push(`💡 Reflexión: ${fp}`);
-  }
-
-  // 3. CTA si no tiene pregunta ni llamada
+  // 2. CTA si no tiene pregunta ni llamada
   if (
     !text.includes("?") &&
     !text.includes("¿") &&
@@ -271,6 +242,15 @@ export default function ClipCard({
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showCopyBox, setShowCopyBox] = useState(false);
 
+  // Hook title management & regeneration
+  const [currentTitle, setCurrentTitle] = useState(clip.title);
+  const [isEditingHook, setIsEditingHook] = useState(false);
+  const [isGeneratingHooks, setIsGeneratingHooks] = useState(false);
+  const [hookList, setHookList] = useState<string[]>(clip.alternative_hooks || []);
+  const [hookSuccessMsg, setHookSuccessMsg] = useState<string | null>(null);
+  const [customTitleInput, setCustomTitleInput] = useState(clip.title);
+  const [isSavingCustomHook, setIsSavingCustomHook] = useState(false);
+
   // Modal personalización
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [customizerMode, setCustomizerMode] = useState<"smart_vertical" | "vertical_blur" | "original" | "split_screen">("smart_vertical");
@@ -304,10 +284,15 @@ export default function ClipCard({
     setStartSec(clip.start_seconds);
     setEndSec(clip.end_seconds);
     setStatus(clip.status || "prospecto");
+    setCurrentTitle(clip.title);
+    setCustomTitleInput(clip.title);
+    if (clip.alternative_hooks && Array.isArray(clip.alternative_hooks)) {
+      setHookList(clip.alternative_hooks);
+    }
     if (primaryThumb) {
       setThumbSrc(primaryThumb);
     }
-  }, [clip.start_seconds, clip.end_seconds, clip.status, primaryThumb]);
+  }, [clip.start_seconds, clip.end_seconds, clip.status, clip.title, clip.alternative_hooks, primaryThumb]);
 
   // Sync inputs when startSec/endSec change
   useEffect(() => {
@@ -315,32 +300,83 @@ export default function ClipCard({
     setEndTimeInput(formatTime(endSec));
   }, [startSec, endSec]);
 
-  // Extract clean hook quote, reflection and attribution
-  let quoteText = clip.quote || "";
-  let rawReflection = clip.reason || "";
+  // Handle hook selection & update
+  const handleSelectHook = async (newHook: string) => {
+    const trimmed = newHook.trim();
+    if (!trimmed) return;
+    setCurrentTitle(trimmed);
+    setCustomTitleInput(trimmed);
+    setHookSuccessMsg("¡Gancho seleccionado y aplicado!");
+    setTimeout(() => setHookSuccessMsg(null), 3000);
 
-  if (!quoteText && clip.caption) {
-    const cleanCap = clip.caption.replace(/#[a-zA-Z0-9_-]+/g, "").trim();
-    const reflectionMatch = cleanCap.match(/(?:💡\s*)?[Rr]eflexi[oó]n:\s*([^📌🎙\n]+(?:\n[^📌🎙\n]+)*)/);
-    if (reflectionMatch) {
-      rawReflection = reflectionMatch[1].trim();
-      const beforeRef = cleanCap.split(/(?:💡\s*)?[Rr]eflexi[oó]n:/)[0].trim();
-      quoteText = beforeRef;
-    } else {
-      const paragraphs = cleanCap.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-      const nonAttribution = paragraphs.filter((p) => !p.startsWith("📌") && !p.startsWith("🎙"));
-      if (nonAttribution.length >= 2 && !clip.reason) {
-        quoteText = nonAttribution[0];
-        rawReflection = nonAttribution.slice(1).join("\n\n");
-      } else {
-        quoteText = nonAttribution[0] || cleanCap;
+    if (clip.id) {
+      try {
+        await fetch(`/api/clips/${clip.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmed }),
+        });
+      } catch (e) {
+        console.error("Error updating clip title:", e);
       }
     }
-  } else if (!quoteText && clip.title) {
-    quoteText = `“${clip.title}”`;
-  }
+  };
 
-  const reflectionText = toFirstPersonReflection(rawReflection, clip.title);
+  const handleSaveCustomHook = async () => {
+    const trimmed = customTitleInput.trim();
+    if (!trimmed || trimmed === currentTitle) return;
+    setIsSavingCustomHook(true);
+    await handleSelectHook(trimmed);
+    setIsSavingCustomHook(false);
+  };
+
+  const handleRegenerateHooks = async () => {
+    if (isGeneratingHooks) return;
+    setIsGeneratingHooks(true);
+    setHookSuccessMsg(null);
+    try {
+      const endpoint = clip.id ? `/api/clips/${clip.id}/generate-hooks` : `/api/clips/generate-hooks`;
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 4 }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Error al generar ganchos con IA");
+        setIsGeneratingHooks(false);
+        return;
+      }
+      const data = await res.json();
+      if (data.hooks && Array.isArray(data.hooks) && data.hooks.length > 0) {
+        setHookList(data.hooks);
+        setHookSuccessMsg("¡Nuevos ganchos generados con IA! Haz clic en cualquiera para aplicarlo.");
+        setTimeout(() => setHookSuccessMsg(null), 4000);
+      }
+    } catch (e) {
+      console.error("Error regenerating hooks:", e);
+      alert("Error de conexión al generar nuevos ganchos");
+    } finally {
+      setIsGeneratingHooks(false);
+    }
+  };
+
+  // Extract clean hook quote without robotic reflection
+  let quoteText = clip.quote || "";
+
+  if (!quoteText && clip.caption) {
+    const cleanCap = clip.caption
+      .replace(/(?:^|\n)\s*(?:💡\s*)?[Rr]eflexi[oó]n:[\s\S]*?(?=\n\n|\n📌|\n🎙|\n¿|$)/g, "")
+      .replace(/#[a-zA-Z0-9_-]+/g, "")
+      .trim();
+    const paragraphs = cleanCap.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    const nonAttribution = paragraphs.filter((p) => !p.startsWith("📌") && !p.startsWith("🎙") && !p.startsWith("💬"));
+    if (nonAttribution.length > 0) {
+      quoteText = nonAttribution[0];
+    }
+  } else if (!quoteText && (currentTitle || clip.title)) {
+    quoteText = `“${currentTitle || clip.title}”`;
+  }
 
   // Close more menu on outside click
   useEffect(() => {
@@ -426,7 +462,7 @@ export default function ClipCard({
     return buildPostDescription({
       caption: clip.caption,
       reason: clip.reason,
-      title: clip.title,
+      title: currentTitle || clip.title,
       videoTitle: effectiveVideoTitle,
       videoChannel: effectiveChannel,
       videoUrl,
@@ -515,7 +551,19 @@ export default function ClipCard({
           <div className={styles.content}>
             {/* Top Row: Title + Score Pill + Stage2 badge */}
             <div className={styles.headerRow}>
-              <h3 className={styles.title}>{clip.title}</h3>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", flex: 1, minWidth: 0, flexWrap: "wrap" }}>
+                <h3 className={styles.title}>{currentTitle}</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingHook(!isEditingHook)}
+                  className={`${styles.hookToggleBtn} ${isEditingHook ? styles.hookToggleBtnActive : ""}`}
+                  title="Cambiar o regenerar títulos gancho con IA"
+                >
+                  <Sparkles size={11} />
+                  <span>{isEditingHook ? "Cerrar" : "Ganchos"}</span>
+                </button>
+              </div>
+
               <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
                 {clip.stage2_done && (
                   <div
@@ -569,6 +617,105 @@ export default function ClipCard({
               </div>
             </div>
 
+            {/* Inline Hook Manager & Generator Panel */}
+            {isEditingHook && (
+              <div className={styles.hookManagerPanel}>
+                <div className={styles.hookPanelHeader}>
+                  <div className={styles.hookPanelTitleBlock}>
+                    <Sparkles size={13} color="#38bdf8" />
+                    <span className={styles.hookPanelTitle}>Títulos Gancho (Hooks Virales)</span>
+                  </div>
+                  <div className={styles.hookPanelActions}>
+                    <button
+                      type="button"
+                      onClick={handleRegenerateHooks}
+                      disabled={isGeneratingHooks}
+                      className={styles.generateHooksBtn}
+                    >
+                      {isGeneratingHooks ? (
+                        <>
+                          <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>🔄</span>
+                          <span>Generando con IA...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>✨</span>
+                          <span>Regenerar ganchos IA</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingHook(false)}
+                      className={styles.closeHookBtn}
+                      title="Cerrar panel de ganchos"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+
+                {hookSuccessMsg && (
+                  <div className={styles.hookSuccessAlert}>
+                    <Check size={12} />
+                    <span>{hookSuccessMsg}</span>
+                  </div>
+                )}
+
+                <div className={styles.currentHookRow}>
+                  <span className={styles.currentHookLabel}>Gancho activo en el clip:</span>
+                  <span className={styles.currentHookValue}>{currentTitle}</span>
+                </div>
+
+                {hookList.length > 0 && (
+                  <div className={styles.hooksListBlock}>
+                    <span className={styles.hooksListSub}>Opciones sugeridas (haz clic para aplicar al clip):</span>
+                    <div className={styles.hooksGrid}>
+                      {hookList.map((h, hIdx) => {
+                        const isCur = currentTitle.trim() === h.trim();
+                        return (
+                          <button
+                            key={hIdx}
+                            type="button"
+                            onClick={() => handleSelectHook(h)}
+                            className={`${styles.hookOptionItem} ${isCur ? styles.hookOptionSelected : ""}`}
+                            title="Seleccionar este título gancho"
+                          >
+                            <div className={styles.hookOptionRadio}>
+                              {isCur ? <Check size={12} color="#38bdf8" /> : <span className={styles.hookRadioDot} />}
+                            </div>
+                            <span className={styles.hookOptionText}>{h}</span>
+                            {isCur && <span className={styles.activePill}>Activo</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className={styles.customHookRow}>
+                  <input
+                    type="text"
+                    value={customTitleInput}
+                    onChange={(e) => setCustomTitleInput(e.target.value)}
+                    placeholder="Escribe o edita un título gancho personalizado..."
+                    className={styles.customHookInput}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveCustomHook();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomHook}
+                    disabled={isSavingCustomHook || !customTitleInput.trim() || customTitleInput.trim() === currentTitle}
+                    className={styles.saveCustomHookBtn}
+                  >
+                    {isSavingCustomHook ? "Guardando..." : "Guardar"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Category Tags Row */}
             {tags.length > 0 && (
               <div className={styles.tagsRow}>
@@ -586,14 +733,6 @@ export default function ClipCard({
                 <span className={styles.quoteHighlight}>“</span>
                 {quoteText.replace(/^“|”$/g, "").trim()}
                 <span className={styles.quoteHighlight}>”</span>
-              </p>
-            )}
-
-            {/* Reflection / Takeaway */}
-            {reflectionText && (
-              <p className={styles.reasonText}>
-                <span className={styles.reflectionTag}>💡 Reflexión</span>
-                {reflectionText}
               </p>
             )}
 
@@ -723,6 +862,17 @@ export default function ClipCard({
                       type="button"
                       className={styles.dropdownItem}
                       onClick={() => {
+                        setIsEditingHook(true);
+                        setShowMoreMenu(false);
+                      }}
+                    >
+                      <Sparkles size={12} color="#38bdf8" />
+                      <span>Cambiar / Regenerar gancho</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.dropdownItem}
+                      onClick={() => {
                         setShowCopyBox(!showCopyBox);
                         setShowMoreMenu(false);
                       }}
@@ -739,7 +889,7 @@ export default function ClipCard({
                       }}
                     >
                       <Copy size={12} />
-                      <span>Copiar post (con reflexión y fuente)</span>
+                      <span>Copiar post para redes</span>
                     </button>
                     {effectiveVideoId && (
                       <button

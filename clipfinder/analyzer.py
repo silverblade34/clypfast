@@ -427,7 +427,7 @@ def _generate_fallback_clips(
                 title="Momento Destacado (Completo)",
                 reason="Segmento principal detectado del video",
                 score=6,
-                caption=f"Lo más destacado de esta sesión 🎬🔥\n\n💡 Reflexión: Una lección clave para aplicar de inmediato.\n\n¿Qué opinas? ¡Comenta abajo! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
+                caption=f"Lo más destacado de esta sesión 🎬🔥\n\n¿Qué opinas? ¡Comenta abajo! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
                 hashtags=["#destacado", "#clip", "#viral", "#contenido", "#resumen"],
             )
         ]
@@ -469,7 +469,7 @@ def _generate_fallback_clips(
                 title=title,
                 reason=reason,
                 score=6,
-                caption=f"{title} 🔥\n\n💡 Reflexión: Una perspectiva clave sobre este tema.\n\n¿Qué opinas? ¡Déjalo en los comentarios! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
+                caption=f"{title} 🔥\n\n¿Qué opinas? ¡Déjalo en los comentarios! 👇\n\n📌 Video: {v_title}\n🎙 Canal: {v_chan}",
                 hashtags=["#destacado", "#clip", "#viral", "#video", "#tendencia"],
             )
         )
@@ -751,17 +751,20 @@ def ensure_caption_attribution(
     video_title: str | None = None,
     video_channel: str | None = None,
 ) -> None:
-    """Ensure that the clip's caption has a reflection and mentions the source video and channel."""
+    """Ensure that the clip's caption mentions the source video and channel without artificial reflections."""
     text = (clip.caption or clip.title or "").strip()
-    has_reflection = bool(re.search(r'(?:^|\s)(?:💡\s*)?reflexi[oó]n:', text, re.IGNORECASE))
+    # Clean out any previously attached robotic reflection
+    text = re.sub(
+        r"(?:^|\n)\s*(?:💡\s*)?[Rr]eflexi[oó]n:.*?(?=\n\n|\n📌|\n🎙|\n¿|$)",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+
     has_video = bool(re.search(r'(?:^|\n)\s*📌\s*video:', text, re.IGNORECASE))
     has_channel = bool(re.search(r'(?:^|\n)\s*🎙\s*canal:', text, re.IGNORECASE))
 
     blocks: list[str] = [text] if text else []
-
-    if not has_reflection and clip.reason:
-        fp_reflection = to_first_person_reflection(clip.reason, clip.title)
-        blocks.append(f"💡 Reflexión: {fp_reflection}")
 
     if not text or (not text.endswith("?") and not text.endswith("👇") and "opinas" not in text.lower() and "¿" not in text):
         blocks.append("¿Qué opinas tú de esto? ¡Déjamelo saber en los comentarios! 👇")
@@ -1296,5 +1299,98 @@ def generate_more_clips_for_video(
             "new_clips": [format_clip(c) for c in saved_db_clips],
             "all_clips": [format_clip(c) for c in all_clips],
         }
+
+
+# ── Hook Title Generator ───────────────────────────────────────────────────────
+
+HOOK_SYSTEM_PROMPT = """Eres un redactor y editor senior de videos virales (TikTok, YouTube Shorts, Reels) con altísimo criterio humano.
+Tu objetivo es redactar TÍTULOS GANCHO (HOOKS) de máximo impacto para un clip extraído de un video o podcast.
+Tus ganchos son directos, conversacionales, intrigantes y suenan 100% auténticos."""
+
+HOOK_USER_PROMPT = """Lee atentamente la transcripción literal de este clip y redacta {count} opciones diferentes de TÍTULOS GANCHO (HOOKS) para TikTok/Reels.
+
+TRANSCRIPCIÓN REAL DEL CLIP:
+\"\"\"{transcript}\"\"\"
+
+CONTEXTO DEL VIDEO:
+Título original: {video_title}
+Canal / Creador: {video_channel}
+
+CRITERIOS ESTRICTOS DE REDACCIÓN HUMANA:
+1. Longitud: Entre 5 y 14 palabras por gancho. Que se puedan leer en menos de 2 segundos.
+2. CERO FRASES CLICHÉ DE IA. Está TERMINANTEMENTE PROHIBIDO usar fórmulas robóticas como:
+   - "El secreto que...", "El peligroso error...", "La importancia de...", "Descubre cómo...", "Un viaje hacia...", "Lo que nadie te dice...", "La clave definitiva...", "Reflexión sobre...".
+3. Busca variedad y ángulo humano genuino:
+   - Cita textual o anécdota concreta dicha en el clip (las palabras reales del protagonista tienen más fuerza que cualquier paráfrasis).
+   - Situación límite, choque o dilema que vive la persona en el fragmento.
+   - Contraste inesperado o revelación cruda.
+   - Pregunta provocadora y directa que solo viendo el video se responde.
+4. Tono natural, contundente, en español conversacional (sin academicismos ni formalismos acartonados).
+
+Responde ÚNICAMENTE un objeto JSON válido con la lista "hooks":
+{{
+  "hooks": [
+    "Gancho opción 1",
+    "Gancho opción 2",
+    "Gancho opción 3",
+    "Gancho opción 4"
+  ]
+}}"""
+
+
+def generate_clip_hooks(
+    transcript: str,
+    video_title: str = "",
+    video_channel: str = "",
+    provider: str = "groq",
+    api_key: str = "",
+    model: str | None = None,
+    count: int = 4,
+) -> list[str]:
+    """Generate punchy, viral, human-crafted hook titles for a clip."""
+    if not transcript or not transcript.strip():
+        return []
+
+    count = max(2, min(8, count))
+    provider = provider.lower()
+
+    prompt = HOOK_USER_PROMPT.format(
+        count=count,
+        transcript=transcript[:4000],
+        video_title=video_title or "Video original",
+        video_channel=video_channel or "Canal",
+    )
+
+    if provider == "gemini":
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)  # pyright: ignore[reportPrivateImportUsage]
+        model_name = model or "gemini-2.5-flash"
+        gem = genai.GenerativeModel(  # pyright: ignore[reportPrivateImportUsage]
+            model_name=model_name,
+            system_instruction=HOOK_SYSTEM_PROMPT,
+        )
+        resp = gem.generate_content(prompt)
+        text = resp.text or ""
+    else:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        model_name = model or "llama-3.3-70b-versatile"
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": HOOK_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.75,
+            max_tokens=1024,
+        )
+        text = response.choices[0].message.content or ""
+
+    raw = _extract_json(text)
+    hooks = raw.get("hooks", [])
+    if isinstance(hooks, list):
+        return [str(h).strip() for h in hooks if str(h).strip()]
+    return []
+
 
 

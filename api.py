@@ -1582,6 +1582,7 @@ class UpdateClipRequest(BaseModel):
     hashtags: str | None = None
     start_seconds: float | None = None
     end_seconds: float | None = None
+    alternative_hooks: list[str] | None = None
 
 
 @app.patch("/clips/{clip_id}")
@@ -1612,12 +1613,111 @@ async def update_clip(clip_id: int, req: UpdateClipRequest) -> dict[str, Any]:
             clip.start_seconds = req.start_seconds
         if req.end_seconds is not None:
             clip.end_seconds = req.end_seconds
+        if req.alternative_hooks is not None:
+            clip.alternative_hooks = json.dumps(req.alternative_hooks, ensure_ascii=False)
 
         clip.updated_at = datetime.now(timezone.utc)
         session.add(clip)
         session.commit()
         session.refresh(clip)
         return clip.model_dump()
+
+
+class GenerateHooksRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    count: int = 4
+
+
+@app.post("/clips/{clip_id}/generate-hooks")
+async def generate_clip_hooks_endpoint(
+    clip_id: int,
+    req: GenerateHooksRequest = GenerateHooksRequest(),
+) -> dict[str, Any]:
+    """Generate fresh, high-impact hook titles for an existing clip using AI."""
+    from sqlmodel import Session
+    from clipfinder.db import engine
+    from clipfinder.models import Clip, Video
+    from clipfinder.analyzer import generate_clip_hooks
+    from clipfinder.downloader import get_source_id
+
+    with Session(engine) as session:
+        clip = session.get(Clip, clip_id)
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip no encontrado")
+        video = session.get(Video, clip.video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video asociado no encontrado")
+
+        clip_data = clip.model_dump()
+        video_data = video.model_dump()
+
+    # Load transcript text for the clip interval
+    source = video_data.get("source_url") or video_data.get("source_path") or ""
+    source_id = get_source_id(source) if source else ""
+    transcript_file = Path("outputs") / source_id / "transcript.json"
+
+    clip_text = ""
+    if transcript_file.exists():
+        try:
+            raw_segs = json.loads(transcript_file.read_text(encoding="utf-8"))
+            s_start = float(clip_data.get("start_seconds", 0))
+            s_end = float(clip_data.get("end_seconds", 0))
+            clip_segs = [
+                str(s.get("text", "")).strip()
+                for s in raw_segs
+                if float(s.get("end", 0)) >= s_start and float(s.get("start", 0)) <= s_end
+            ]
+            clip_text = " ".join([s for s in clip_segs if s]).strip()
+        except Exception as exc:
+            logger.warning("Error reading transcript for clip %d: %s", clip_id, exc)
+
+    if not clip_text:
+        clip_text = str(clip_data.get("quote") or clip_data.get("title") or clip_data.get("reason") or "").strip()
+
+    if not clip_text:
+        raise HTTPException(status_code=400, detail="No hay texto o transcripción disponible para este clip")
+
+    provider = req.provider or video_data.get("provider") or "groq"
+    env_key = "GROQ_API_KEY" if provider == "groq" else "GEMINI_API_KEY"
+    api_key = os.getenv(env_key)
+    if not api_key:
+        alt_key = "GEMINI_API_KEY" if provider == "groq" else "GROQ_API_KEY"
+        if os.getenv(alt_key):
+            provider = "gemini" if provider == "groq" else "groq"
+            api_key = os.getenv(alt_key)
+        else:
+            raise HTTPException(status_code=400, detail=f"No se configuró API key para {env_key}")
+
+    try:
+        hooks = generate_clip_hooks(
+            transcript=clip_text,
+            video_title=video_data.get("title") or "",
+            video_channel=video_data.get("channel") or "",
+            provider=provider,
+            api_key=api_key or "",
+            model=req.model or video_data.get("llm_model"),
+            count=req.count,
+        )
+    except Exception as exc:
+        logger.exception("Error generating hooks for clip %d: %s", clip_id, exc)
+        raise HTTPException(status_code=500, detail=f"Error generando ganchos: {str(exc)}")
+
+    # Update alternative_hooks in DB
+    with Session(engine) as session:
+        db_clip = session.get(Clip, clip_id)
+        if db_clip and hooks:
+            db_clip.alternative_hooks = json.dumps(hooks, ensure_ascii=False)
+            session.add(db_clip)
+            session.commit()
+
+    return {
+        "success": True,
+        "clip_id": clip_id,
+        "current_title": clip_data.get("title"),
+        "hooks": hooks,
+    }
+
 
 
 @app.get("/clips")
